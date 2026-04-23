@@ -284,7 +284,7 @@ The package is ESM-only, no build step. `index.js`, `resolver.js`, `scales.js`, 
 
 ### Data files
 
-`scales.js` and `chords.js` are derived from the Scale Navigator Dashboard and stripped to only the fields Strudel users need: for scales, `root` / `pitch_classes` / `scale_class`; for chords, `chord_type` / `original_voicing` / `prime_form_kinda` / `root`. The adjacency graph, curated chord palettes, spelling, and other editorial fields are intentionally omitted.
+`scales.js` and `chords.js` are derived from the Scale Navigator Dashboard and stripped to only the fields Strudel users need: for scales, `root` / `pitch_classes` / `scale_class`; for chords, `chord_type` / `original_voicing` / `prime_form_kinda` / `root`. 
 
 ### Publishing
 
