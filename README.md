@@ -197,7 +197,7 @@ note(ens.arp(4))
 
 ## Caveats
 
-- **Scale → Strudel mapping is partial.** `strudelScale` maps `diatonic`, `harmonic_minor`, `harmonic_major`, and `acoustic` to Strudel equivalents. For `octatonic_*`, `hexatonic_*`, and `whole_tone_*` scales, it falls back to `"C:major"`. Use `ens.scalePitchClasses` directly for those.
+- **Scale → Strudel mapping.** All 7 scale classes map to Strudel equivalents: `diatonic` → `major`, `harmonic_minor` → `harmonic minor`, `harmonic_major` → `harmonic major`, `acoustic` → `lydian dominant`, `whole_tone` → `whole tone`, `octatonic` → `diminished`, `hexatonic` → `augmented`.
 - **Read-only.** This package never writes changes back to the room.
 - **Auth required.** Anonymous access isn't enabled.
 

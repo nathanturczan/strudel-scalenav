@@ -9,6 +9,9 @@ const SCALE_CLASS_TO_STRUDEL = {
   harmonic_minor: 'harmonic minor',
   harmonic_major: 'harmonic major',
   acoustic: 'lydian dominant',
+  whole_tone: 'whole tone',
+  octatonic: 'diminished',
+  hexatonic: 'augmented',
 };
 
 export function pcToNoteName(pc, { flats = false } = {}) {
