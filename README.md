@@ -100,6 +100,7 @@ await ens.leave()
 | `ens.scaleName` | signal `string` | Raw ID, e.g. `"c_diatonic"` |
 | `ens.scaleClass` | signal `string` | e.g. `"diatonic"`, `"harmonic_minor"` |
 | `ens.scaleRootName` | signal `string` | e.g. `"C"`, `"F#"` |
+| `ens.scalePretty` | getter `string` | Pretty display: `"E♭ Diatonic"` or `"[0,2] Whole Tone"` |
 
 ### Chord data
 
@@ -113,6 +114,7 @@ await ens.leave()
 | `ens.chordRootName` | signal `string` | e.g. `"A"`, `"Db"` |
 | `ens.chordType` | signal `string` | e.g. `"M7"`, `"_13#9-110"` |
 | `ens.chordNoteNames` | getter `string[]` | e.g. `["G3", "Db4", "F#4"]` |
+| `ens.chordPretty` | getter `string` | Pretty display: `"A♭ m7"`, `"F♯ 13♯9"` |
 
 ### Other
 

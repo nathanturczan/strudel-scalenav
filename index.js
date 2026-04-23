@@ -19,7 +19,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 
-import { resolveScale, resolveChord, pcToNoteName, midiToNoteName } from './resolver.js';
+import { resolveScale, resolveChord, pcToNoteName, midiToNoteName, formatScaleName, formatChordName } from './resolver.js';
 
 const FIREBASE_CONFIG = {
   apiKey: 'AIzaSyBiTTX24mBjypGdel2ARBx0UUvFQEaRDf4',
@@ -234,6 +234,10 @@ export async function joinEnsemble(roomId, options = {}) {
     scaleName: strudelSignal(() => state.scale?.id ?? 'unknown'),
     scaleClass: strudelSignal(() => state.scale?.scaleClass ?? 'unknown'),
     scaleRootName: strudelSignal(() => state.scale?.rootName ?? 'C'),
+    // Pretty display name: "C Diatonic" or "[0,6] Whole Tone"
+    get scalePretty() {
+      return state.scale?.prettyName ?? '';
+    },
 
     // === CHORD ===
     // Pitch class (0-11)
@@ -257,6 +261,10 @@ export async function joinEnsemble(roomId, options = {}) {
     chordType: strudelSignal(() => state.chord?.chordType ?? 'unknown'),
     get chordNoteNames() {
       return state.chord?.noteNames ?? [];
+    },
+    // Pretty display name: "A♭ m7"
+    get chordPretty() {
+      return state.chord?.prettyName ?? '';
     },
 
     // === OTHER ===
@@ -362,4 +370,4 @@ export async function joinEnsemble(roomId, options = {}) {
   return api;
 }
 
-export { pcToNoteName, midiToNoteName, resolveScale, resolveChord };
+export { pcToNoteName, midiToNoteName, resolveScale, resolveChord, formatScaleName, formatChordName };
