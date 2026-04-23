@@ -47,14 +47,24 @@ function getFbDb() {
   return getFirestore(getFbApp());
 }
 
-function strudelSignal(fn) {
-  const g = globalThis;
-  if (typeof g.signal === 'function') return g.signal(fn);
-  if (typeof g.strudel?.signal === 'function') return g.strudel.signal(fn);
-  throw new Error(
-    'strudel-scalenav: Strudel `signal()` not found in global scope. ' +
-      'Run this inside the Strudel REPL (strudel.cc) or import `{ signal }` from `@strudel/core` before importing this package.',
-  );
+function getStrudelSignal() {
+  // Try window first (browser), then globalThis, then strudel namespace
+  if (typeof window !== 'undefined' && typeof window.signal === 'function') return window.signal;
+  if (typeof globalThis.signal === 'function') return globalThis.signal;
+  if (typeof globalThis.strudel?.signal === 'function') return globalThis.strudel.signal;
+  return null;
+}
+
+function strudelSignal(fn, segmentRate = 1) {
+  const sig = getStrudelSignal();
+  if (!sig) {
+    throw new Error(
+      'strudel-scalenav: Strudel `signal()` not found. ' +
+        'Run this inside the Strudel REPL (strudel.cc) or import `{ signal }` from `@strudel/core`.',
+    );
+  }
+  // Apply segment to make it work with note() - continuous signals don't trigger events
+  return sig(fn).segment(segmentRate);
 }
 
 export async function signInWithGoogle() {
@@ -137,11 +147,17 @@ export async function joinEnsemble(roomId, options = {}) {
     connected: false,
   };
 
+  let firstSnapshotResolve;
+  const firstSnapshot = new Promise((resolve) => {
+    firstSnapshotResolve = resolve;
+  });
+
   const unsubRoom = onSnapshot(
     roomRef,
     (snap) => {
       if (!snap.exists()) {
         state.connected = false;
+        firstSnapshotResolve(); // resolve even if room doesn't exist
         return;
       }
       const data = snap.data();
@@ -152,6 +168,7 @@ export async function joinEnsemble(roomId, options = {}) {
       state.hostName = data.hostName ?? null;
       state.roomName = data.roomName ?? null;
       state.connected = true;
+      firstSnapshotResolve(); // resolve on first data
       if (options.onUpdate) {
         try {
           options.onUpdate(state);
@@ -162,8 +179,12 @@ export async function joinEnsemble(roomId, options = {}) {
     },
     (err) => {
       console.warn('[strudel-scalenav] room snapshot error:', err);
+      firstSnapshotResolve(); // resolve on error too
     },
   );
+
+  // Wait for first snapshot before returning
+  await firstSnapshot;
 
   await setDoc(
     presenceRef,
@@ -188,29 +209,52 @@ export async function joinEnsemble(roomId, options = {}) {
       return state;
     },
 
+    // === SCALE ===
+    // Pitch class (0-11)
     scaleRoot: strudelSignal(() => state.scale?.root ?? 0),
-    scaleName: strudelSignal(() => state.scale?.id ?? 'unknown'),
+    // Playable note (octave 4)
+    scaleRootNote: strudelSignal(() => (state.scale?.root ?? 0) + 60),
+    // Pitch classes array
+    get scalePitchClasses() {
+      return state.scale?.pitchClasses ?? [];
+    },
+    // Playable notes (octave 4)
+    get scaleNotes() {
+      return (state.scale?.pitchClasses ?? []).map(pc => pc + 60);
+    },
+    // For .scale() function
     strudelScale: strudelSignal(() => state.scale?.strudelScale ?? 'C:major'),
+    // Metadata
+    scaleName: strudelSignal(() => state.scale?.id ?? 'unknown'),
     scaleClass: strudelSignal(() => state.scale?.scaleClass ?? 'unknown'),
     scaleRootName: strudelSignal(() => state.scale?.rootName ?? 'C'),
 
+    // === CHORD ===
+    // Pitch class (0-11)
     chordRoot: strudelSignal(() => state.chord?.root ?? 0),
-    chordRootName: strudelSignal(() => state.chord?.rootName ?? 'C'),
-    chordType: strudelSignal(() => state.chord?.chordType ?? 'unknown'),
-    bpm: strudelSignal(() => state.bpm),
-
-    get pitchClasses() {
-      return state.scale?.pitchClasses ?? [];
-    },
-    get chordNotes() {
+    // Playable note (octave 2 for bass)
+    chordRootNote: strudelSignal(() => (state.chord?.root ?? 0) + 36),
+    // Original voicing (MIDI notes as specified)
+    get chordVoicing() {
       return state.chord?.voicing ?? [];
     },
-    get chordNoteNames() {
-      return state.chord?.noteNames ?? [];
-    },
+    // Pitch classes array
     get chordPitchClasses() {
       return state.chord?.pitchClasses ?? [];
     },
+    // Close position (pitch classes in octave 4)
+    get chordClosed() {
+      return (state.chord?.pitchClasses ?? []).map(pc => pc + 60);
+    },
+    // Metadata
+    chordRootName: strudelSignal(() => state.chord?.rootName ?? 'C'),
+    chordType: strudelSignal(() => state.chord?.chordType ?? 'unknown'),
+    get chordNoteNames() {
+      return state.chord?.noteNames ?? [];
+    },
+
+    // === OTHER ===
+    bpm: strudelSignal(() => state.bpm),
     get hostName() {
       return state.hostName;
     },
@@ -218,8 +262,53 @@ export async function joinEnsemble(roomId, options = {}) {
       return state.roomName;
     },
 
-    scalePitch: (i) => strudelSignal(() => scalePC(i)),
+    // === HELPERS ===
+    // Get i-th scale pitch class in octave 4
+    scalePitch: (i) => strudelSignal(() => scalePC(i) + 60),
+    // Get i-th chord voicing note
     chordPitch: (i) => strudelSignal(() => chordNote(i)),
+    // Get i-th chord pitch class in octave 4
+    chordClosedPitch: (i) => strudelSignal(() => {
+      const pcs = state.chord?.pitchClasses ?? [];
+      const pc = pcs.length ? pcs[i % pcs.length] : 0;
+      return pc + 60;
+    }),
+
+    // Clean arpeggiator: ens.arp(4) or ens.arp("0 2 1 3")
+    arp(pattern = 4) {
+      const sig = getStrudelSignal();
+      if (!sig) throw new Error('strudel-scalenav: signal() not found');
+      if (typeof pattern === 'number') {
+        // arp(4) = cycle through chord notes at rate 4
+        return sig((t) => {
+          const notes = state.chord?.voicing ?? [];
+          if (!notes.length) return 60;
+          return notes[Math.floor(t * pattern) % notes.length];
+        }).segment(pattern);
+      } else {
+        // arp("0 2 1 3") = play chord indices in that order
+        const indices = pattern.split(/\s+/).map(Number);
+        return sig((t) => {
+          const notes = state.chord?.voicing ?? [];
+          if (!notes.length) return 60;
+          const idx = indices[Math.floor(t * indices.length) % indices.length];
+          return notes[idx % notes.length];
+        }).segment(indices.length);
+      }
+    },
+
+    // Block chord: ens.block() plays all notes at once
+    block() {
+      const sig = getStrudelSignal();
+      if (!sig) throw new Error('strudel-scalenav: signal() not found');
+      const notes = state.chord?.voicing ?? [60];
+      // Return stacked signals for each note
+      const patterns = notes.map((_, i) => sig(() => chordNote(i)).segment(1));
+      if (typeof globalThis.stack === 'function') {
+        return globalThis.stack(...patterns);
+      }
+      return patterns[0]; // fallback
+    },
 
     leave: async () => {
       unsubRoom();

@@ -14,16 +14,13 @@ Connect your [Strudel](https://strudel.cc) live-coding patterns to [Scale Naviga
 Paste this into [strudel.cc](https://strudel.cc):
 
 ```js
-await samples('github:tidalcycles/dirt-samples')
-const { signInWithGoogle, joinEnsemble } = await import('https://esm.sh/strudel-scalenav')
-
-await signInWithGoogle()
+const { signInWithGoogle, joinEnsemble, getCurrentUser } = await import('https://cdn.jsdelivr.net/npm/strudel-scalenav/dist/strudel-scalenav.js')
+if (!getCurrentUser()) await signInWithGoogle()
 const ens = await joinEnsemble('your-room-id')
 
-note("0 2 4 7".add(ens.scaleRoot))
+n("0 2 4 <[6,8] [7,9]>")
   .scale(ens.strudelScale)
-  .s("piano")
-  .cpm(ens.bpm.div(4))
+  .sound("piano")
 ```
 
 Whenever the Scale Navigator host changes the scale or chord, your pattern reharmonizes on the next cycle — no re-evaluation needed.
@@ -35,7 +32,7 @@ Whenever the Scale Navigator host changes the scale or chord, your pattern rehar
 ### In the Strudel REPL (the normal case)
 
 ```js
-const sn = await import('https://esm.sh/strudel-scalenav')
+const sn = await import('https://cdn.jsdelivr.net/npm/strudel-scalenav/dist/strudel-scalenav.js')
 ```
 
 ### In a Vite / bundler project using `@strudel/core`
@@ -54,7 +51,7 @@ You must have `@strudel/core`'s `signal` available in global scope (the REPL doe
 
 ## Signing in
 
-**Sign-in is required.** Everyone who joins an ensemble shows up to the host by name, and we use the email for occasional updates about Scale Navigator. Pick one:
+**Sign-in is required.** Everyone who joins an ensemble shows up to the host by name. Pick one:
 
 ```js
 await signInWithGoogle()
@@ -71,204 +68,138 @@ const user = getCurrentUser()
 if (!user) await signInWithGoogle()
 ```
 
-Change your display name (this is what the host sees in the ensemble roster):
-
-```js
-await setDisplayName('DJ Strudel')
-```
-
-Sign out:
-
-```js
-await signOut()
-```
-
 ---
 
 ## Joining an ensemble
 
-You need a room ID. The host gets this when they create an ensemble in the Scale Navigator Dashboard or mobile app — it's a short string like `nathan-jam-session` or a generated ID.
+You need a room ID. The host gets this when they create an ensemble in the Scale Navigator Dashboard or mobile app.
 
 ```js
 const ens = await joinEnsemble('nathan-jam-session')
 ```
 
-Leave gracefully (removes your presence from the host's roster):
+Leave gracefully:
 
 ```js
 await ens.leave()
-```
-
-The package also cleans up automatically on `beforeunload`, but explicit `leave()` is cleaner.
-
-### Optional callback
-
-Fires on every update from the host:
-
-```js
-const ens = await joinEnsemble('nathan-jam-session', {
-  onUpdate: (state) => {
-    console.log('host changed:', state.scale?.rootName, state.chord?.chordType)
-  }
-})
 ```
 
 ---
 
 ## The `ens` API
 
-Everything on `ens` falls into three groups:
+### Scale data
 
-### Strudel signals (use inside pattern code)
-
-These are [Strudel signals](https://strudel.cc/learn/signals/) — patterns you chain onto `note`, `n`, `scale`, `cpm`, etc. Each evaluates to the *current* host value on every cycle.
-
-| Signal | Type | Example |
+| Property | Type | Description |
 |---|---|---|
-| `ens.scaleRoot` | number (0–11) pitch class of the scale's root | `note(ens.scaleRoot)` |
-| `ens.scaleRootName` | string, e.g. `"C"`, `"F#"` | — |
-| `ens.scaleName` | string, e.g. `"c_diatonic"` (raw Scale Navigator ID) | — |
-| `ens.strudelScale` | string, e.g. `"C:major"` — pass to `.scale()` | `note("0 2 4").scale(ens.strudelScale)` |
-| `ens.scaleClass` | string, e.g. `"diatonic"`, `"harmonic_minor"` | — |
-| `ens.chordRoot` | number (0–11) pitch class of the chord root | `note(ens.chordRoot.add(48))` |
-| `ens.chordRootName` | string | — |
-| `ens.chordType` | string, e.g. `"M7"`, `"_13#9-110"` | — |
-| `ens.bpm` | number | `.cpm(ens.bpm.div(4))` |
+| `ens.scaleRoot` | signal (0–11) | Pitch class of scale root |
+| `ens.scaleRootNote` | signal (MIDI) | Scale root in octave 4 (playable) |
+| `ens.scalePitchClasses` | getter `number[]` | Pitch classes 0–11 |
+| `ens.scaleNotes` | getter `number[]` | Scale notes in octave 4 (playable) |
+| `ens.strudelScale` | signal `string` | For `.scale()`, e.g. `"C:major"` |
+| `ens.scaleName` | signal `string` | Raw ID, e.g. `"c_diatonic"` |
+| `ens.scaleClass` | signal `string` | e.g. `"diatonic"`, `"harmonic_minor"` |
+| `ens.scaleRootName` | signal `string` | e.g. `"C"`, `"F#"` |
 
-### Live JS values (read synchronously — not signals)
+### Chord data
 
-Use when you want the raw data in a function body, not inside a Strudel pattern.
-
-| Property | Type | Notes |
+| Property | Type | Description |
 |---|---|---|
-| `ens.pitchClasses` | `number[]` | Scale degrees as pitch classes 0–11 |
-| `ens.chordNotes` | `number[]` | MIDI note numbers of the current chord voicing |
-| `ens.chordNoteNames` | `string[]` | Like `["G3", "Db4", "F#4", "A4", "C5"]` |
-| `ens.chordPitchClasses` | `number[]` | Prime-form pitch classes |
-| `ens.hostName` | `string \| null` | Who's driving |
-| `ens.roomName` | `string \| null` | Human-readable room name |
-| `ens.state` | `object` | Full internal state — `state.scale`, `state.chord`, `state.raw` |
+| `ens.chordRoot` | signal (0–11) | Pitch class of chord root |
+| `ens.chordRootNote` | signal (MIDI) | Chord root in octave 2 (bass) |
+| `ens.chordVoicing` | getter `number[]` | Original voicing (MIDI notes) |
+| `ens.chordPitchClasses` | getter `number[]` | Pitch classes 0–11 |
+| `ens.chordClosed` | getter `number[]` | Close position in octave 4 (playable) |
+| `ens.chordRootName` | signal `string` | e.g. `"A"`, `"Db"` |
+| `ens.chordType` | signal `string` | e.g. `"M7"`, `"_13#9-110"` |
+| `ens.chordNoteNames` | getter `string[]` | e.g. `["G3", "Db4", "F#4"]` |
 
-### Index-to-signal helpers
+### Other
 
-Sometimes you want "the i-th scale degree" or "the i-th chord note" as a signal. These take an integer and return a Strudel signal:
+| Property | Type | Description |
+|---|---|---|
+| `ens.bpm` | signal | Host's BPM |
+| `ens.hostName` | getter | Who's hosting |
+| `ens.roomName` | getter | Room display name |
+| `ens.state` | getter | Full internal state object |
+
+### Index helpers
 
 ```js
-// Arpeggiate the current chord in a fixed pattern
-stack(
-  note(ens.chordPitch(0)),  // root
-  note(ens.chordPitch(2)),  // middle voice
-  note(ens.chordPitch(4)),  // top
-)
-
-// March up the scale
-note("0 1 2 3 4 5 6".pick([0, 1, 2, 3, 4, 5, 6].map(i => ens.scalePitch(i))))
+ens.scalePitch(i)       // i-th scale note (octave 4)
+ens.chordPitch(i)       // i-th voicing note (original octaves)
+ens.chordClosedPitch(i) // i-th chord note (close position, octave 4)
 ```
 
-### Utilities (also exported at top level)
+### Pattern helpers
 
 ```js
-import { pcToNoteName, midiToNoteName, resolveScale, resolveChord } from 'strudel-scalenav'
+// Arpeggiate chord voicing
+note(ens.arp(4)).s("piano")           // 4 notes per cycle
+note(ens.arp("0 2 1 3")).s("piano")   // custom index pattern
 
-pcToNoteName(3)          // => "D#"
-pcToNoteName(3, { flats: true })  // => "Eb"
-midiToNoteName(60)       // => "C4"
-resolveScale('c_diatonic')  // => { root: 0, pitchClasses: [...], strudelScale: "C:major", ... }
-resolveChord('a_13#9-110')  // => { root: 9, voicing: [55, 61, 66, 69, 72], ... }
+// Block chord (all notes at once)
+note(ens.block()).s("piano").slow(2)
 ```
 
 ---
 
 ## Pattern recipes
 
-### Stay in the host's key
+### Play in the host's scale
 
 ```js
-note("0 2 4 5 7".fast(2))
+n("0 2 4 <[6,8] [7,9]>")
   .scale(ens.strudelScale)
-  .s("piano")
+  .sound("piano")
 ```
 
-### Play the host's chord as an arpeggio
+### Arpeggiate the chord voicing
 
 ```js
-note(ens.chordPitch(0).cat(ens.chordPitch(1), ens.chordPitch(2), ens.chordPitch(3)))
-  .s("piano")
-  .fast(4)
+note(ens.arp(4)).sound("piano")
 ```
 
-### A bassline locked to the chord root
+### Chord with bass note
 
 ```js
-note(ens.chordRoot.add(36)).s("bass").slow(2)
+stack(
+  note(ens.chordRootNote).slow(2),  // bass
+  note(ens.arp(4))                   // arpeggio
+).sound("piano")
 ```
 
-### Generative melody over the host's current scale
+### Block chords
 
 ```js
-n(rand.range(0, 7).segment(8))
+note(ens.block())
+  .struct("x ~ x ~ x x ~ x")
+  .sound("piano")
+```
+
+### Generative melody
+
+```js
+n(irand(8).segment(8))
   .scale(ens.strudelScale)
-  .s("piano")
+  .sound("piano")
+```
+
+### Sync to host's BPM
+
+```js
+note(ens.arp(4))
+  .sound("piano")
   .cpm(ens.bpm.div(4))
 ```
-
-### React to chord changes in custom JS
-
-```js
-const ens = await joinEnsemble('room', {
-  onUpdate: (state) => {
-    if (state.chord?.chordType?.startsWith('m7')) {
-      // cue a sample, swap a pattern, whatever
-    }
-  }
-})
-```
-
----
-
-## Data shapes
-
-Scale Navigator stores scales and chords as string IDs. This package resolves them to useful shapes using the same data files the Dashboard uses.
-
-**Scale ID format:** `<root>_<class>` (e.g. `c_diatonic`, `fs_harmonic_minor`) or rootless (`octatonic_1`, `whole_tone_2`).
-
-**Chord ID format:** `<root>_<chord_type>` (e.g. `a_M7-0`, `f_13#9-110`).
-
-Resolved scale object:
-```js
-{
-  id: 'c_diatonic',
-  root: 0,                         // pitch class of root
-  rootName: 'C',
-  pitchClasses: [0, 2, 4, 5, 7, 9, 11],
-  scaleClass: 'diatonic',
-  strudelScale: 'C:major',         // or null if class isn't mappable
-}
-```
-
-Resolved chord object:
-```js
-{
-  id: 'a_13#9-110',
-  root: 9,
-  rootName: 'A',
-  chordType: '_13#9-110',
-  voicing: [55, 61, 66, 69, 72],         // MIDI note numbers
-  noteNames: ['G3', 'Db4', 'F#4', 'A4', 'C5'],
-  pitchClasses: [0, 1, 6, 7, 9],         // prime form
-}
-```
-
-Scale Navigator's adjacency graph, curated chord palettes per scale, and other editorial data stay in the (private) Scale Navigator Dashboard — this package only includes what Strudel users need to interpret the host's current state.
 
 ---
 
 ## Caveats
 
-- **Scale → Strudel mapping is partial.** `strudelScale` currently maps `diatonic`, `harmonic_minor`, `harmonic_major`, and `acoustic` to their Strudel/tonal equivalents. For `octatonic_*`, `hexatonic_*`, and `whole_tone_*` scales, `ens.strudelScale` falls back to `"C:major"`. Use `ens.pitchClasses` directly for those.
-- **Read-only.** This package never writes scale or chord changes back to the room. Host controls harmony; you react.
-- **Firestore free-tier reads.** Each room update counts as one document read per client. Dozens of live Strudel users per room is fine; hundreds could eat into the project's quota.
-- **Auth required.** Anonymous access isn't enabled because Scale Navigator uses real identity for ensemble participation and user communication.
+- **Scale → Strudel mapping is partial.** `strudelScale` maps `diatonic`, `harmonic_minor`, `harmonic_major`, and `acoustic` to Strudel equivalents. For `octatonic_*`, `hexatonic_*`, and `whole_tone_*` scales, it falls back to `"C:major"`. Use `ens.scalePitchClasses` directly for those.
+- **Read-only.** This package never writes changes back to the room.
+- **Auth required.** Anonymous access isn't enabled.
 
 ---
 
@@ -278,35 +209,26 @@ Scale Navigator's adjacency graph, curated chord palettes per scale, and other e
 git clone https://github.com/nathanturczan/strudel-scalenav
 cd strudel-scalenav
 npm install
+npm run build
 ```
-
-The package is ESM-only, no build step. `index.js`, `resolver.js`, `scales.js`, and `chords.js` ship as-is.
-
-### Data files
-
-`scales.js` and `chords.js` are derived from the Scale Navigator Dashboard and stripped to only the fields Strudel users need: for scales, `root` / `pitch_classes` / `scale_class`; for chords, `chord_type` / `original_voicing` / `prime_form_kinda` / `root`. 
 
 ### Publishing
 
 ```bash
+npm run build
 npm publish
 ```
-
-Users immediately get it via `https://esm.sh/strudel-scalenav` with no further action needed.
 
 ---
 
 ## Related
 
-- [Scale Navigator Dashboard](https://github.com/nathanturczan/scale-navigator-dashboard) — the host app where ensembles are created and harmony is controlled.
-- [Scale Navigator Dashboard Plugin](https://github.com/nathanturczan/Dashboard-Plugin) — DAW/native integration (Max, VST) for production workflows.
-- [Strudel](https://strudel.cc) — browser-based live coding environment.
-- [TidalCycles](https://tidalcycles.org/) — the pattern language Strudel ports to JavaScript.
+- [Scale Navigator Dashboard](https://github.com/nathanturczan/scale-navigator-dashboard) — the host app
+- [Strudel](https://strudel.cc) — browser-based live coding
+- [TidalCycles](https://tidalcycles.org/) — the pattern language Strudel ports to JS
 
 ---
 
 ## License
 
 MIT © Nathan Turczan. See [LICENSE](./LICENSE).
-
-Scale and chord data files are adapted from Scale Navigator Dashboard under MIT.

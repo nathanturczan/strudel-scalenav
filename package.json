@@ -1,6 +1,6 @@
 {
   "name": "strudel-scalenav",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "description": "Connect Strudel live-coding patterns to Scale Navigator ensembles. Sign in, join a live room, and sample the host's current scale, chord, and BPM as Strudel signals.",
   "type": "module",
   "main": "index.js",
@@ -16,6 +16,7 @@
     "resolver.js",
     "scales.js",
     "chords.js",
+    "dist",
     "README.md",
     "LICENSE"
   ],
@@ -49,7 +50,13 @@
       "optional": true
     }
   },
+  "scripts": {
+    "build": "esbuild index.js --bundle --format=esm --outfile=dist/strudel-scalenav.js --minify"
+  },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0"
   }
 }
