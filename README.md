@@ -121,32 +121,59 @@ await ens.leave()
 | `ens.bpm` | signal | Host's BPM |
 | `ens.hostName` | getter | Who's hosting |
 | `ens.roomName` | getter | Room display name |
+| `ens.roomId` | string | Room ID you joined |
 | `ens.state` | getter | Full internal state object |
 
 ### Index helpers
 
-```js
-ens.scalePitch(i)       // i-th scale note (octave 4)
-ens.chordPitch(i)       // i-th voicing note (original octaves)
-ens.chordClosedPitch(i) // i-th chord note (close position, octave 4)
-ens.stackThird(i)       // stack in 3rds from chord root, continues up in octaves
-                        // 0=root, 1=3rd, 2=5th, 3=7th, 4=9th (octave up), 5=11th, 6=13th
+All index helpers support negative indices: `-1` = last, `-2` = second to last, etc.
 
-// Negative indices wrap from the end:
-ens.chordClosedPitch(-1) // top note of chord
-ens.stackThird(-1)       // 13th (one third below root wrapping around)
-```
+| Method | Description |
+|---|---|
+| `ens.scalePitch(i)` | i-th scale note in octave 4 |
+| `ens.chordPitch(i)` | i-th voicing note (original octaves from host) |
+| `ens.chordClosedPitch(i)` | i-th chord note in close position (octave 4) |
+| `ens.stackThird(i)` | Stack in 3rds from chord root using scale (see below) |
+
+#### `stackThird(i)` — tertian chord building
+
+Builds chords/extensions by stacking thirds from the chord root, using the current scale. Continues up in octaves (9th is above 7th, not wrapped back down).
+
+| Index | Interval | Example (C major, root = C) |
+|---|---|---|
+| 0 | root | C4 |
+| 1 | 3rd | E4 |
+| 2 | 5th | G4 |
+| 3 | 7th | B4 |
+| 4 | 9th | D5 |
+| 5 | 11th | F5 |
+| 6 | 13th | A5 |
+| 7 | root (2 oct) | C6 |
 
 ### Pattern helpers
 
-```js
-// Arpeggiate chord voicing
-note(ens.arp(4)).s("piano")           // 4 notes per cycle
-note(ens.arp("0 2 1 3")).s("piano")   // custom index pattern
+| Method | Description |
+|---|---|
+| `ens.arp(n)` | Arpeggiate chord voicing at n notes per cycle |
+| `ens.block()` | All chord notes at once (stacked) |
+| `ens.leave()` | Leave the ensemble gracefully |
 
-// Block chord (all notes at once)
-note(ens.block()).s("piano").slow(2)
+```js
+note(ens.arp(4)).s("piano")           // 4 notes per cycle
+note(ens.block()).s("piano").slow(2)  // block chord
 ```
+
+### Auth functions
+
+| Function | Description |
+|---|---|
+| `signInWithGoogle()` | Google popup sign-in |
+| `signInWithEmail(email, password)` | Email sign-in (returning users) |
+| `signUpWithEmail(email, password, displayName)` | Create new account |
+| `signOut()` | Sign out |
+| `getCurrentUser()` | Get current user or `null` |
+| `onAuthChange(callback)` | Listen for auth state changes |
+| `setDisplayName(name)` | Update your display name |
 
 ---
 
