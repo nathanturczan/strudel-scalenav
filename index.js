@@ -197,10 +197,16 @@ export async function joinEnsemble(roomId, options = {}) {
     { merge: true },
   );
 
-  const scalePC = (i) => state.scale?.pitchClasses?.[i % (state.scale?.pitchClasses?.length || 1)] ?? 0;
+  // Wrap index to handle negatives: -1 = last, -2 = second to last, etc.
+  const wrapIndex = (i, len) => ((i % len) + len) % len;
+
+  const scalePC = (i) => {
+    const pcs = state.scale?.pitchClasses ?? [];
+    return pcs.length ? pcs[wrapIndex(i, pcs.length)] : 0;
+  };
   const chordNote = (i) => {
     const notes = state.chord?.voicing ?? [];
-    return notes.length ? notes[i % notes.length] : 60;
+    return notes.length ? notes[wrapIndex(i, notes.length)] : 60;
   };
 
   const api = {
@@ -267,10 +273,10 @@ export async function joinEnsemble(roomId, options = {}) {
     scalePitch: (i) => strudelSignal(() => scalePC(i) + 60),
     // Get i-th chord voicing note
     chordPitch: (i) => strudelSignal(() => chordNote(i)),
-    // Get i-th chord pitch class in octave 4
+    // Get i-th chord pitch class in octave 4 (supports negative indices: -1 = top note)
     chordClosedPitch: (i) => strudelSignal(() => {
       const pcs = state.chord?.pitchClasses ?? [];
-      const pc = pcs.length ? pcs[i % pcs.length] : 0;
+      const pc = pcs.length ? pcs[wrapIndex(i, pcs.length)] : 0;
       return pc + 60;
     }),
 

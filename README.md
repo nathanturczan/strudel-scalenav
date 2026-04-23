@@ -129,6 +129,10 @@ await ens.leave()
 ens.scalePitch(i)       // i-th scale note (octave 4)
 ens.chordPitch(i)       // i-th voicing note (original octaves)
 ens.chordClosedPitch(i) // i-th chord note (close position, octave 4)
+
+// Negative indices wrap from the end:
+ens.chordClosedPitch(-1) // top note of chord
+ens.chordClosedPitch(-2) // second from top
 ```
 
 ### Pattern helpers
