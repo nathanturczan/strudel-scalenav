@@ -129,10 +129,12 @@ await ens.leave()
 ens.scalePitch(i)       // i-th scale note (octave 4)
 ens.chordPitch(i)       // i-th voicing note (original octaves)
 ens.chordClosedPitch(i) // i-th chord note (close position, octave 4)
+ens.stackThird(i)       // stack in 3rds from chord root, continues up in octaves
+                        // 0=root, 1=3rd, 2=5th, 3=7th, 4=9th (octave up), 5=11th, 6=13th
 
 // Negative indices wrap from the end:
 ens.chordClosedPitch(-1) // top note of chord
-ens.chordClosedPitch(-2) // second from top
+ens.stackThird(-1)       // 13th (one third below root wrapping around)
 ```
 
 ### Pattern helpers

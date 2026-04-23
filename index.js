@@ -280,6 +280,27 @@ export async function joinEnsemble(roomId, options = {}) {
       return pc + 60;
     }),
 
+    // Stack in thirds from chord root using current scale (0=root, 1=3rd, 2=5th, 3=7th, 4=9th, etc.)
+    // Continues up in octaves: 9th is above 7th, 11th above 9th, etc.
+    stackThird: (i) => strudelSignal(() => {
+      const scalePCs = state.scale?.pitchClasses ?? [];
+      const chordRoot = state.chord?.root ?? 0;
+      if (!scalePCs.length) return 60;
+
+      // Find chord root position in scale
+      let rootIndex = scalePCs.indexOf(chordRoot);
+      if (rootIndex === -1) rootIndex = 0;
+
+      // Stack in thirds: each step = 2 scale degrees
+      const targetIndex = rootIndex + (i * 2);
+
+      // Calculate octave based on how far up we've gone
+      const octaveOffset = Math.floor(targetIndex / scalePCs.length);
+      const wrappedIndex = wrapIndex(targetIndex, scalePCs.length);
+
+      return scalePCs[wrappedIndex] + 60 + (octaveOffset * 12);
+    }),
+
     // Clean arpeggiator: ens.arp(4) or ens.arp("0 2 1 3")
     arp(pattern = 4) {
       const sig = getStrudelSignal();
