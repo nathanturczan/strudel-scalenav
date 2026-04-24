@@ -238,13 +238,7 @@ export async function joinEnsemble(roomId, options = {}) {
   const makeArp = (getNotes, pattern = 4) => {
     const sig = getStrudelSignal();
     if (!sig) throw new Error('strudel-scalenav: signal() not found');
-    if (typeof pattern === 'number') {
-      return sig((t) => {
-        const notes = getNotes();
-        if (!notes.length) return 60;
-        return notes[Math.floor(t * pattern) % notes.length];
-      }).segment(pattern);
-    } else {
+    if (typeof pattern === 'string') {
       const indices = pattern.split(/\s+/).map(Number);
       return sig((t) => {
         const notes = getNotes();
@@ -252,6 +246,14 @@ export async function joinEnsemble(roomId, options = {}) {
         const idx = indices[Math.floor(t * indices.length) % indices.length];
         return notes[idx % notes.length];
       }).segment(indices.length);
+    } else {
+      // number or fallback to 4
+      const n = typeof pattern === 'number' ? pattern : 4;
+      return sig((t) => {
+        const notes = getNotes();
+        if (!notes.length) return 60;
+        return notes[Math.floor(t * n) % notes.length];
+      }).segment(n);
     }
   };
 
@@ -289,14 +291,15 @@ export async function joinEnsemble(roomId, options = {}) {
       arp: (pattern = 4) => {
         const sig = getStrudelSignal();
         if (!sig) throw new Error('strudel-scalenav: signal() not found');
-        if (typeof pattern === 'number') {
-          return sig((t) => getScaleThirdPitch(Math.floor(t * pattern) % pattern)).segment(pattern);
-        } else {
+        if (typeof pattern === 'string') {
           const indices = pattern.split(/\s+/).map(Number);
           return sig((t) => {
             const idx = indices[Math.floor(t * indices.length) % indices.length];
             return getScaleThirdPitch(idx);
           }).segment(indices.length);
+        } else {
+          const n = typeof pattern === 'number' ? pattern : 4;
+          return sig((t) => getScaleThirdPitch(Math.floor(t * n) % n)).segment(n);
         }
       },
 
@@ -354,14 +357,15 @@ export async function joinEnsemble(roomId, options = {}) {
     arp: (pattern = 4) => {
       const sig = getStrudelSignal();
       if (!sig) throw new Error('strudel-scalenav: signal() not found');
-      if (typeof pattern === 'number') {
-        return sig((t) => getChordThirdPitch(Math.floor(t * pattern) % pattern)).segment(pattern);
-      } else {
+      if (typeof pattern === 'string') {
         const indices = pattern.split(/\s+/).map(Number);
         return sig((t) => {
           const idx = indices[Math.floor(t * indices.length) % indices.length];
           return getChordThirdPitch(idx);
         }).segment(indices.length);
+      } else {
+        const n = typeof pattern === 'number' ? pattern : 4;
+        return sig((t) => getChordThirdPitch(Math.floor(t * n) % n)).segment(n);
       }
     },
 
