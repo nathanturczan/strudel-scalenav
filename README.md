@@ -160,6 +160,15 @@ Builds chords/extensions by stacking thirds from the chord root, using the curre
 | `ens.block()` | All chord notes at once (stacked) |
 | `ens.leave()` | Leave the ensemble gracefully |
 
+### Visual helpers
+
+| Property/Method | Type | Description |
+|---|---|---|
+| `ens.scaleColor` | getter `string` | Current scale color (hex or rgb) |
+| `ens.showBadge(options?)` | function | Display scale badge in REPL header |
+
+Options for `showBadge`: `x` (default 280), `y` (default 35), `size` (default 22), `showText` (default true)
+
 ```js
 note(ens.arp(4)).s("piano")           // 4 notes per cycle
 note(ens.block()).s("piano").slow(2)  // block chord
@@ -227,6 +236,18 @@ note(ens.arp(4))
   .sound("piano")
   .cpm(ens.bpm.div(4))
 ```
+
+### Display scale badge
+
+```js
+ens.showBadge()  // Shows polygon + scale/chord names in header
+
+n("0 2 4 6")
+  .scale(ens.strudelScale)
+  .sound("piano")
+```
+
+The badge automatically positions to the right of "REPL (warm)" and updates when scale/chord changes.
 
 ---
 

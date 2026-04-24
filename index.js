@@ -20,6 +20,7 @@ import {
 } from 'firebase/firestore';
 
 import { resolveScale, resolveChord, pcToNoteName, midiToNoteName, formatScaleName, formatChordName } from './resolver.js';
+import { getScaleColor, getPolygonVertices, drawScaleBadge, startBadgeDrawing, PITCH_CLASS_COLORS } from './visual.js';
 
 const FIREBASE_CONFIG = {
   apiKey: 'AIzaSyBiTTX24mBjypGdel2ARBx0UUvFQEaRDf4',
@@ -276,13 +277,22 @@ export async function joinEnsemble(roomId, options = {}) {
       return state.roomName;
     },
 
-    // === HELPERS ===
-    // Get i-th scale pitch class in octave 4
+    // === PITCH HELPERS ===
+    // Scale: i-th scale note in octave 4
     scalePitch: (i) => strudelSignal(() => scalePC(i) + 60),
-    // Get i-th chord voicing note
-    chordPitch: (i) => strudelSignal(() => chordNote(i)),
-    // Get i-th chord pitch class in octave 4 (supports negative indices: -1 = top note)
+
+    // Voicing: i-th chord voicing note (original octaves from host)
+    chordVoicingPitch: (i) => strudelSignal(() => chordNote(i)),
+    voicingPitch: (i) => strudelSignal(() => chordNote(i)), // alias
+    chordPitch: (i) => strudelSignal(() => chordNote(i)),   // alias for backwards compat
+
+    // Closed: i-th chord note in close position (octave 4)
     chordClosedPitch: (i) => strudelSignal(() => {
+      const pcs = state.chord?.pitchClasses ?? [];
+      const pc = pcs.length ? pcs[wrapIndex(i, pcs.length)] : 0;
+      return pc + 60;
+    }),
+    closedPitch: (i) => strudelSignal(() => { // alias
       const pcs = state.chord?.pitchClasses ?? [];
       const pc = pcs.length ? pcs[wrapIndex(i, pcs.length)] : 0;
       return pc + 60;
@@ -309,7 +319,28 @@ export async function joinEnsemble(roomId, options = {}) {
       return scalePCs[wrappedIndex] + 60 + (octaveOffset * 12);
     }),
 
-    // Clean arpeggiator: ens.arp(4) or ens.arp("0 2 1 3")
+    // Arpeggiator for scale notes: ens.arpScale(8)
+    arpScale(pattern = 4) {
+      const sig = getStrudelSignal();
+      if (!sig) throw new Error('strudel-scalenav: signal() not found');
+      if (typeof pattern === 'number') {
+        return sig((t) => {
+          const pcs = state.scale?.pitchClasses ?? [];
+          if (!pcs.length) return 60;
+          return pcs[Math.floor(t * pattern) % pcs.length] + 60;
+        }).segment(pattern);
+      } else {
+        const indices = pattern.split(/\s+/).map(Number);
+        return sig((t) => {
+          const pcs = state.scale?.pitchClasses ?? [];
+          if (!pcs.length) return 60;
+          const idx = indices[Math.floor(t * indices.length) % indices.length];
+          return pcs[idx % pcs.length] + 60;
+        }).segment(indices.length);
+      }
+    },
+
+    // Arpeggiator for chord voicing: ens.arp(4) or ens.arpVoicing(4)
     arp(pattern = 4) {
       const sig = getStrudelSignal();
       if (!sig) throw new Error('strudel-scalenav: signal() not found');
@@ -332,17 +363,108 @@ export async function joinEnsemble(roomId, options = {}) {
       }
     },
 
-    // Block chord: ens.block() plays all notes at once
-    block() {
+    // Alias for clarity
+    arpVoicing(pattern = 4) {
+      return this.arp(pattern);
+    },
+
+    // Arpeggiator using closed position (octave 4): ens.arpClosed(4)
+    arpClosed(pattern = 4) {
+      const sig = getStrudelSignal();
+      if (!sig) throw new Error('strudel-scalenav: signal() not found');
+      if (typeof pattern === 'number') {
+        return sig((t) => {
+          const pcs = state.chord?.pitchClasses ?? [];
+          if (!pcs.length) return 60;
+          return pcs[Math.floor(t * pattern) % pcs.length] + 60;
+        }).segment(pattern);
+      } else {
+        const indices = pattern.split(/\s+/).map(Number);
+        return sig((t) => {
+          const pcs = state.chord?.pitchClasses ?? [];
+          if (!pcs.length) return 60;
+          const idx = indices[Math.floor(t * indices.length) % indices.length];
+          return pcs[idx % pcs.length] + 60;
+        }).segment(indices.length);
+      }
+    },
+
+    // Arpeggiator for stacked thirds (1-3-5-7-9-11-13...)
+    arpThirds(pattern = 4) {
+      const sig = getStrudelSignal();
+      if (!sig) throw new Error('strudel-scalenav: signal() not found');
+      // Helper to compute stacked third pitch
+      const getThirdPitch = (i) => {
+        const scalePCs = state.scale?.pitchClasses ?? [];
+        const chordRoot = state.chord?.root ?? 0;
+        if (!scalePCs.length) return 60;
+        let rootIndex = scalePCs.indexOf(chordRoot);
+        if (rootIndex === -1) rootIndex = 0;
+        const targetIndex = rootIndex + (i * 2);
+        const octaveOffset = Math.floor(targetIndex / scalePCs.length);
+        const wrappedIndex = ((targetIndex % scalePCs.length) + scalePCs.length) % scalePCs.length;
+        return scalePCs[wrappedIndex] + 60 + (octaveOffset * 12);
+      };
+      if (typeof pattern === 'number') {
+        return sig((t) => getThirdPitch(Math.floor(t * pattern) % pattern)).segment(pattern);
+      } else {
+        const indices = pattern.split(/\s+/).map(Number);
+        return sig((t) => {
+          const idx = indices[Math.floor(t * indices.length) % indices.length];
+          return getThirdPitch(idx);
+        }).segment(indices.length);
+      }
+    },
+
+    // Block chord from voicing (original octaves)
+    blockVoicing() {
       const sig = getStrudelSignal();
       if (!sig) throw new Error('strudel-scalenav: signal() not found');
       const notes = state.chord?.voicing ?? [60];
-      // Return stacked signals for each note
       const patterns = notes.map((_, i) => sig(() => chordNote(i)).segment(1));
       if (typeof globalThis.stack === 'function') {
         return globalThis.stack(...patterns);
       }
-      return patterns[0]; // fallback
+      return patterns[0];
+    },
+    block() { return this.blockVoicing(); }, // alias for backwards compat
+
+    // Block chord from closed position (octave 4)
+    blockClosed() {
+      const sig = getStrudelSignal();
+      if (!sig) throw new Error('strudel-scalenav: signal() not found');
+      const pcs = state.chord?.pitchClasses ?? [0];
+      const patterns = pcs.map((pc) => sig(() => pc + 60).segment(1));
+      if (typeof globalThis.stack === 'function') {
+        return globalThis.stack(...patterns);
+      }
+      return patterns[0];
+    },
+
+    // Block chord from stacked thirds (1-3-5-7-9-11-13...)
+    blockThirds(count = 4) {
+      const sig = getStrudelSignal();
+      if (!sig) throw new Error('strudel-scalenav: signal() not found');
+      const getThirdPitch = (i) => {
+        const scalePCs = state.scale?.pitchClasses ?? [];
+        const chordRoot = state.chord?.root ?? 0;
+        if (!scalePCs.length) return 60;
+        let rootIndex = scalePCs.indexOf(chordRoot);
+        if (rootIndex === -1) rootIndex = 0;
+        const targetIndex = rootIndex + (i * 2);
+        const octaveOffset = Math.floor(targetIndex / scalePCs.length);
+        const wrappedIndex = ((targetIndex % scalePCs.length) + scalePCs.length) % scalePCs.length;
+        return scalePCs[wrappedIndex] + 60 + (octaveOffset * 12);
+      };
+      const patterns = [];
+      for (let i = 0; i < count; i++) {
+        const idx = i;
+        patterns.push(sig(() => getThirdPitch(idx)).segment(1));
+      }
+      if (typeof globalThis.stack === 'function') {
+        return globalThis.stack(...patterns);
+      }
+      return patterns[0];
     },
 
     leave: async () => {
@@ -352,6 +474,18 @@ export async function joinEnsemble(roomId, options = {}) {
       } catch (err) {
         console.warn('[strudel-scalenav] leave: presence cleanup failed:', err);
       }
+    },
+
+    // Show the scale badge in Strudel REPL header area
+    // Just call ens.showBadge() - it handles everything
+    showBadge(options = {}) {
+      return startBadgeDrawing({ state }, options);
+    },
+
+    // Get current scale color
+    get scaleColor() {
+      const s = state.scale;
+      return s ? getScaleColor(s.root, s.scaleClass) : '#ffffff';
     },
   };
 
@@ -371,3 +505,4 @@ export async function joinEnsemble(roomId, options = {}) {
 }
 
 export { pcToNoteName, midiToNoteName, resolveScale, resolveChord, formatScaleName, formatChordName };
+export { getScaleColor, getPolygonVertices, drawScaleBadge, PITCH_CLASS_COLORS };
