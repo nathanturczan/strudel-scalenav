@@ -88,6 +88,99 @@ await ens.leave()
 
 ## The `ens` API
 
+### Hierarchical API (recommended)
+
+The API is organized into clear namespaces: `ens.scale.*` and `ens.chord.*`.
+
+#### `ens.scale.*`
+
+| Method | Description |
+|---|---|
+| `ens.scale.pitch(i)` | i-th scale note in octave 4 |
+| `ens.scale.arp(n)` | Arpeggiate scale notes at n notes per cycle |
+| `ens.scale.block()` | All scale notes as block chord |
+
+#### `ens.scale.thirds.*`
+
+Stack thirds from the **scale root** (index 0 of the scale).
+
+| Method | Description |
+|---|---|
+| `ens.scale.thirds.pitch(i)` | i-th stacked third from scale root |
+| `ens.scale.thirds.arp(n)` | Arpeggiate thirds from scale root |
+| `ens.scale.thirds.block(count)` | Block chord of `count` stacked thirds |
+
+#### `ens.chord.voicing.*`
+
+Access the host's original chord voicing (preserves octave placement).
+
+| Method | Description |
+|---|---|
+| `ens.chord.voicing.pitch(i)` | i-th voicing note (original octaves) |
+| `ens.chord.voicing.arp(n)` | Arpeggiate voicing at n notes per cycle |
+| `ens.chord.voicing.block()` | All voicing notes as block chord |
+
+#### `ens.chord.closed.*`
+
+Close-position chord (all pitch classes in octave 4).
+
+| Method | Description |
+|---|---|
+| `ens.chord.closed.pitch(i)` | i-th chord note in close position |
+| `ens.chord.closed.arp(n)` | Arpeggiate closed position |
+| `ens.chord.closed.block()` | All closed position notes as block chord |
+
+#### `ens.chord.thirds.*`
+
+Stack thirds from the **chord root** using the current scale. Continues up in octaves (9th is above 7th, not wrapped back down).
+
+| Method | Description |
+|---|---|
+| `ens.chord.thirds.pitch(i)` | i-th stacked third from chord root |
+| `ens.chord.thirds.arp(n)` | Arpeggiate thirds from chord root |
+| `ens.chord.thirds.block(count)` | Block chord of `count` stacked thirds |
+
+**Stacked thirds index reference:**
+
+| Index | Interval | Example (C major scale, chord root = C) |
+|---|---|---|
+| 0 | root | C4 |
+| 1 | 3rd | E4 |
+| 2 | 5th | G4 |
+| 3 | 7th | B4 |
+| 4 | 9th | D5 |
+| 5 | 11th | F5 |
+| 6 | 13th | A5 |
+| 7 | root (2 oct) | C6 |
+
+All index methods support negative indices: `-1` = last, `-2` = second to last, etc.
+
+---
+
+### Flat API (aliases)
+
+For backwards compatibility and quick access, flat methods are also available:
+
+| Flat Method | Equivalent |
+|---|---|
+| `ens.scalePitch(i)` | `ens.scale.pitch(i)` |
+| `ens.chordPitch(i)` | `ens.chord.voicing.pitch(i)` |
+| `ens.chordVoicingPitch(i)` | `ens.chord.voicing.pitch(i)` |
+| `ens.closedPitch(i)` | `ens.chord.closed.pitch(i)` |
+| `ens.chordClosedPitch(i)` | `ens.chord.closed.pitch(i)` |
+| `ens.stackThird(i)` | `ens.chord.thirds.pitch(i)` |
+| `ens.arpScale(n)` | `ens.scale.arp(n)` |
+| `ens.arp(n)` | `ens.chord.voicing.arp(n)` |
+| `ens.arpVoicing(n)` | `ens.chord.voicing.arp(n)` |
+| `ens.arpClosed(n)` | `ens.chord.closed.arp(n)` |
+| `ens.arpThirds(n)` | `ens.chord.thirds.arp(n)` |
+| `ens.block()` | `ens.chord.voicing.block()` |
+| `ens.blockVoicing()` | `ens.chord.voicing.block()` |
+| `ens.blockClosed()` | `ens.chord.closed.block()` |
+| `ens.blockThirds(count)` | `ens.chord.thirds.block(count)` |
+
+---
+
 ### Scale data
 
 | Property | Type | Description |
@@ -125,40 +218,7 @@ await ens.leave()
 | `ens.roomName` | getter | Room display name |
 | `ens.roomId` | string | Room ID you joined |
 | `ens.state` | getter | Full internal state object |
-
-### Index helpers
-
-All index helpers support negative indices: `-1` = last, `-2` = second to last, etc.
-
-| Method | Description |
-|---|---|
-| `ens.scalePitch(i)` | i-th scale note in octave 4 |
-| `ens.chordPitch(i)` | i-th voicing note (original octaves from host) |
-| `ens.chordClosedPitch(i)` | i-th chord note in close position (octave 4) |
-| `ens.stackThird(i)` | Stack in 3rds from chord root using scale (see below) |
-
-#### `stackThird(i)` — tertian chord building
-
-Builds chords/extensions by stacking thirds from the chord root, using the current scale. Continues up in octaves (9th is above 7th, not wrapped back down).
-
-| Index | Interval | Example (C major, root = C) |
-|---|---|---|
-| 0 | root | C4 |
-| 1 | 3rd | E4 |
-| 2 | 5th | G4 |
-| 3 | 7th | B4 |
-| 4 | 9th | D5 |
-| 5 | 11th | F5 |
-| 6 | 13th | A5 |
-| 7 | root (2 oct) | C6 |
-
-### Pattern helpers
-
-| Method | Description |
-|---|---|
-| `ens.arp(n)` | Arpeggiate chord voicing at n notes per cycle |
-| `ens.block()` | All chord notes at once (stacked) |
-| `ens.leave()` | Leave the ensemble gracefully |
+| `ens.leave()` | async | Leave the ensemble gracefully |
 
 ### Visual helpers
 
@@ -167,11 +227,11 @@ Builds chords/extensions by stacking thirds from the chord root, using the curre
 | `ens.scaleColor` | getter `string` | Current scale color (hex or rgb) |
 | `ens.showBadge(options?)` | function | Display scale badge in REPL header |
 
-Options for `showBadge`: `x` (default 280), `y` (default 35), `size` (default 22), `showText` (default true)
+Options for `showBadge`: `x` (default 480), `y` (default 38), `size` (default 26), `showText` (default true)
 
 ```js
-note(ens.arp(4)).s("piano")           // 4 notes per cycle
-note(ens.block()).s("piano").slow(2)  // block chord
+note(ens.chord.voicing.arp(4)).s("piano")           // 4 notes per cycle
+note(ens.chord.voicing.block()).s("piano").slow(2)  // block chord
 ```
 
 ### Auth functions
@@ -201,23 +261,37 @@ n("0 2 4 <[6,8] [7,9]>")
 ### Arpeggiate the chord voicing
 
 ```js
-note(ens.arp(4)).sound("piano")
+note(ens.chord.voicing.arp(4)).sound("piano")
+```
+
+### Arpeggiate stacked thirds (1-3-5-7...)
+
+```js
+note(ens.chord.thirds.arp(4)).sound("piano")
 ```
 
 ### Chord with bass note
 
 ```js
 stack(
-  note(ens.chordRootNote).slow(2),  // bass
-  note(ens.arp(4))                   // arpeggio
+  note(ens.chordRootNote).slow(2),   // bass
+  note(ens.chord.voicing.arp(4))     // arpeggio
 ).sound("piano")
 ```
 
 ### Block chords
 
 ```js
-note(ens.block())
+note(ens.chord.voicing.block())
   .struct("x ~ x ~ x x ~ x")
+  .sound("piano")
+```
+
+### Block chord of stacked thirds (7th chord)
+
+```js
+note(ens.chord.thirds.block(4))  // root, 3rd, 5th, 7th
+  .struct("x ~ x ~")
   .sound("piano")
 ```
 
@@ -229,10 +303,16 @@ n(irand(8).segment(8))
   .sound("piano")
 ```
 
+### Arpeggiate the scale itself
+
+```js
+note(ens.scale.arp(8)).sound("piano")
+```
+
 ### Sync to host's BPM
 
 ```js
-note(ens.arp(4))
+note(ens.chord.voicing.arp(4))
   .sound("piano")
   .cpm(ens.bpm.div(4))
 ```

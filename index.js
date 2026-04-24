@@ -210,60 +210,228 @@ export async function joinEnsemble(roomId, options = {}) {
     return notes.length ? notes[wrapIndex(i, notes.length)] : 60;
   };
 
+  // === INTERNAL HELPERS ===
+  // Helper to compute stacked third pitch from chord root
+  const getChordThirdPitch = (i) => {
+    const scalePCs = state.scale?.pitchClasses ?? [];
+    const chordRoot = state.chord?.root ?? 0;
+    if (!scalePCs.length) return 60;
+    let rootIndex = scalePCs.indexOf(chordRoot);
+    if (rootIndex === -1) rootIndex = 0;
+    const targetIndex = rootIndex + (i * 2);
+    const octaveOffset = Math.floor(targetIndex / scalePCs.length);
+    const wrappedIndex = ((targetIndex % scalePCs.length) + scalePCs.length) % scalePCs.length;
+    return scalePCs[wrappedIndex] + 60 + (octaveOffset * 12);
+  };
+
+  // Helper to compute stacked third pitch from scale root (index 0)
+  const getScaleThirdPitch = (i) => {
+    const scalePCs = state.scale?.pitchClasses ?? [];
+    if (!scalePCs.length) return 60;
+    const targetIndex = i * 2;
+    const octaveOffset = Math.floor(targetIndex / scalePCs.length);
+    const wrappedIndex = ((targetIndex % scalePCs.length) + scalePCs.length) % scalePCs.length;
+    return scalePCs[wrappedIndex] + 60 + (octaveOffset * 12);
+  };
+
+  // Generic arp helper
+  const makeArp = (getNotes, pattern = 4) => {
+    const sig = getStrudelSignal();
+    if (!sig) throw new Error('strudel-scalenav: signal() not found');
+    if (typeof pattern === 'number') {
+      return sig((t) => {
+        const notes = getNotes();
+        if (!notes.length) return 60;
+        return notes[Math.floor(t * pattern) % notes.length];
+      }).segment(pattern);
+    } else {
+      const indices = pattern.split(/\s+/).map(Number);
+      return sig((t) => {
+        const notes = getNotes();
+        if (!notes.length) return 60;
+        const idx = indices[Math.floor(t * indices.length) % indices.length];
+        return notes[idx % notes.length];
+      }).segment(indices.length);
+    }
+  };
+
+  // Generic block helper
+  const makeBlock = (getNotes) => {
+    const sig = getStrudelSignal();
+    if (!sig) throw new Error('strudel-scalenav: signal() not found');
+    const notes = getNotes();
+    const patterns = notes.map((n) => sig(() => n).segment(1));
+    if (typeof globalThis.stack === 'function') {
+      return globalThis.stack(...patterns);
+    }
+    return patterns[0];
+  };
+
+  // === HIERARCHICAL NAMESPACE OBJECTS ===
+
+  // ens.scale.*
+  const scaleNamespace = {
+    // ens.scale.pitch(i) - i-th scale note in octave 4
+    pitch: (i) => strudelSignal(() => scalePC(i) + 60),
+
+    // ens.scale.arp(n) - arpeggiate scale notes
+    arp: (pattern = 4) => makeArp(() => (state.scale?.pitchClasses ?? []).map(pc => pc + 60), pattern),
+
+    // ens.scale.block() - all scale notes as block chord
+    block: () => makeBlock(() => (state.scale?.pitchClasses ?? []).map(pc => pc + 60)),
+
+    // ens.scale.thirds.*
+    thirds: {
+      // ens.scale.thirds.pitch(i) - stacked thirds from scale root
+      pitch: (i) => strudelSignal(() => getScaleThirdPitch(i)),
+
+      // ens.scale.thirds.arp(n) - arpeggiate thirds from scale root
+      arp: (pattern = 4) => {
+        const sig = getStrudelSignal();
+        if (!sig) throw new Error('strudel-scalenav: signal() not found');
+        if (typeof pattern === 'number') {
+          return sig((t) => getScaleThirdPitch(Math.floor(t * pattern) % pattern)).segment(pattern);
+        } else {
+          const indices = pattern.split(/\s+/).map(Number);
+          return sig((t) => {
+            const idx = indices[Math.floor(t * indices.length) % indices.length];
+            return getScaleThirdPitch(idx);
+          }).segment(indices.length);
+        }
+      },
+
+      // ens.scale.thirds.block(count) - block chord of stacked thirds from scale root
+      block: (count = 4) => {
+        const sig = getStrudelSignal();
+        if (!sig) throw new Error('strudel-scalenav: signal() not found');
+        const patterns = [];
+        for (let i = 0; i < count; i++) {
+          const idx = i;
+          patterns.push(sig(() => getScaleThirdPitch(idx)).segment(1));
+        }
+        if (typeof globalThis.stack === 'function') {
+          return globalThis.stack(...patterns);
+        }
+        return patterns[0];
+      },
+    },
+  };
+
+  // ens.chord.voicing.*
+  const voicingNamespace = {
+    // ens.chord.voicing.pitch(i) - i-th voicing note (original octaves)
+    pitch: (i) => strudelSignal(() => chordNote(i)),
+
+    // ens.chord.voicing.arp(n) - arpeggiate voicing
+    arp: (pattern = 4) => makeArp(() => state.chord?.voicing ?? [], pattern),
+
+    // ens.chord.voicing.block() - all voicing notes as block chord
+    block: () => makeBlock(() => state.chord?.voicing ?? [60]),
+  };
+
+  // ens.chord.closed.*
+  const closedNamespace = {
+    // ens.chord.closed.pitch(i) - i-th chord note in close position (octave 4)
+    pitch: (i) => strudelSignal(() => {
+      const pcs = state.chord?.pitchClasses ?? [];
+      const pc = pcs.length ? pcs[wrapIndex(i, pcs.length)] : 0;
+      return pc + 60;
+    }),
+
+    // ens.chord.closed.arp(n) - arpeggiate closed position
+    arp: (pattern = 4) => makeArp(() => (state.chord?.pitchClasses ?? []).map(pc => pc + 60), pattern),
+
+    // ens.chord.closed.block() - all closed position notes as block chord
+    block: () => makeBlock(() => (state.chord?.pitchClasses ?? [0]).map(pc => pc + 60)),
+  };
+
+  // ens.chord.thirds.*
+  const chordThirdsNamespace = {
+    // ens.chord.thirds.pitch(i) - stacked thirds from chord root
+    pitch: (i) => strudelSignal(() => getChordThirdPitch(i)),
+
+    // ens.chord.thirds.arp(n) - arpeggiate thirds from chord root
+    arp: (pattern = 4) => {
+      const sig = getStrudelSignal();
+      if (!sig) throw new Error('strudel-scalenav: signal() not found');
+      if (typeof pattern === 'number') {
+        return sig((t) => getChordThirdPitch(Math.floor(t * pattern) % pattern)).segment(pattern);
+      } else {
+        const indices = pattern.split(/\s+/).map(Number);
+        return sig((t) => {
+          const idx = indices[Math.floor(t * indices.length) % indices.length];
+          return getChordThirdPitch(idx);
+        }).segment(indices.length);
+      }
+    },
+
+    // ens.chord.thirds.block(count) - block chord of stacked thirds
+    block: (count = 4) => {
+      const sig = getStrudelSignal();
+      if (!sig) throw new Error('strudel-scalenav: signal() not found');
+      const patterns = [];
+      for (let i = 0; i < count; i++) {
+        const idx = i;
+        patterns.push(sig(() => getChordThirdPitch(idx)).segment(1));
+      }
+      if (typeof globalThis.stack === 'function') {
+        return globalThis.stack(...patterns);
+      }
+      return patterns[0];
+    },
+  };
+
+  // ens.chord.*
+  const chordNamespace = {
+    voicing: voicingNamespace,
+    closed: closedNamespace,
+    thirds: chordThirdsNamespace,
+  };
+
   const api = {
     roomId,
     get state() {
       return state;
     },
 
-    // === SCALE ===
-    // Pitch class (0-11)
+    // === HIERARCHICAL API (PRIMARY) ===
+    scale: scaleNamespace,
+    chord: chordNamespace,
+
+    // === SCALE DATA (flat, for convenience) ===
     scaleRoot: strudelSignal(() => state.scale?.root ?? 0),
-    // Playable note (octave 4)
     scaleRootNote: strudelSignal(() => (state.scale?.root ?? 0) + 60),
-    // Pitch classes array
     get scalePitchClasses() {
       return state.scale?.pitchClasses ?? [];
     },
-    // Playable notes (octave 4)
     get scaleNotes() {
       return (state.scale?.pitchClasses ?? []).map(pc => pc + 60);
     },
-    // For .scale() function
     strudelScale: strudelSignal(() => state.scale?.strudelScale ?? 'C:major'),
-    // Metadata
     scaleName: strudelSignal(() => state.scale?.id ?? 'unknown'),
     scaleClass: strudelSignal(() => state.scale?.scaleClass ?? 'unknown'),
     scaleRootName: strudelSignal(() => state.scale?.rootName ?? 'C'),
-    // Pretty display name: "C Diatonic" or "[0,6] Whole Tone"
     get scalePretty() {
       return state.scale?.prettyName ?? '';
     },
 
-    // === CHORD ===
-    // Pitch class (0-11)
+    // === CHORD DATA (flat, for convenience) ===
     chordRoot: strudelSignal(() => state.chord?.root ?? 0),
-    // Playable note (octave 2 for bass)
     chordRootNote: strudelSignal(() => (state.chord?.root ?? 0) + 36),
-    // Original voicing (MIDI notes as specified)
     get chordVoicing() {
       return state.chord?.voicing ?? [];
     },
-    // Pitch classes array
     get chordPitchClasses() {
       return state.chord?.pitchClasses ?? [];
     },
-    // Close position (pitch classes in octave 4)
     get chordClosed() {
       return (state.chord?.pitchClasses ?? []).map(pc => pc + 60);
     },
-    // Metadata
     chordRootName: strudelSignal(() => state.chord?.rootName ?? 'C'),
     chordType: strudelSignal(() => state.chord?.chordType ?? 'unknown'),
     get chordNoteNames() {
       return state.chord?.noteNames ?? [];
     },
-    // Pretty display name: "A♭ m7"
     get chordPretty() {
       return state.chord?.prettyName ?? '';
     },
@@ -277,195 +445,36 @@ export async function joinEnsemble(roomId, options = {}) {
       return state.roomName;
     },
 
-    // === PITCH HELPERS ===
-    // Scale: i-th scale note in octave 4
-    scalePitch: (i) => strudelSignal(() => scalePC(i) + 60),
+    // === FLAT ALIASES (backwards compatibility) ===
+    // These mirror the hierarchical API for users who prefer flat access
 
-    // Voicing: i-th chord voicing note (original octaves from host)
-    chordVoicingPitch: (i) => strudelSignal(() => chordNote(i)),
-    voicingPitch: (i) => strudelSignal(() => chordNote(i)), // alias
-    chordPitch: (i) => strudelSignal(() => chordNote(i)),   // alias for backwards compat
+    // Scale pitch helpers
+    scalePitch: (i) => scaleNamespace.pitch(i),
 
-    // Closed: i-th chord note in close position (octave 4)
-    chordClosedPitch: (i) => strudelSignal(() => {
-      const pcs = state.chord?.pitchClasses ?? [];
-      const pc = pcs.length ? pcs[wrapIndex(i, pcs.length)] : 0;
-      return pc + 60;
-    }),
-    closedPitch: (i) => strudelSignal(() => { // alias
-      const pcs = state.chord?.pitchClasses ?? [];
-      const pc = pcs.length ? pcs[wrapIndex(i, pcs.length)] : 0;
-      return pc + 60;
-    }),
+    // Chord voicing pitch helpers
+    chordVoicingPitch: (i) => voicingNamespace.pitch(i),
+    voicingPitch: (i) => voicingNamespace.pitch(i),
+    chordPitch: (i) => voicingNamespace.pitch(i),
 
-    // Stack in thirds from chord root using current scale (0=root, 1=3rd, 2=5th, 3=7th, 4=9th, etc.)
-    // Continues up in octaves: 9th is above 7th, 11th above 9th, etc.
-    stackThird: (i) => strudelSignal(() => {
-      const scalePCs = state.scale?.pitchClasses ?? [];
-      const chordRoot = state.chord?.root ?? 0;
-      if (!scalePCs.length) return 60;
+    // Chord closed pitch helpers
+    chordClosedPitch: (i) => closedNamespace.pitch(i),
+    closedPitch: (i) => closedNamespace.pitch(i),
 
-      // Find chord root position in scale
-      let rootIndex = scalePCs.indexOf(chordRoot);
-      if (rootIndex === -1) rootIndex = 0;
+    // Stacked thirds (from chord root)
+    stackThird: (i) => chordThirdsNamespace.pitch(i),
 
-      // Stack in thirds: each step = 2 scale degrees
-      const targetIndex = rootIndex + (i * 2);
+    // Arps (flat)
+    arpScale: (pattern = 4) => scaleNamespace.arp(pattern),
+    arp: (pattern = 4) => voicingNamespace.arp(pattern),
+    arpVoicing: (pattern = 4) => voicingNamespace.arp(pattern),
+    arpClosed: (pattern = 4) => closedNamespace.arp(pattern),
+    arpThirds: (pattern = 4) => chordThirdsNamespace.arp(pattern),
 
-      // Calculate octave based on how far up we've gone
-      const octaveOffset = Math.floor(targetIndex / scalePCs.length);
-      const wrappedIndex = wrapIndex(targetIndex, scalePCs.length);
-
-      return scalePCs[wrappedIndex] + 60 + (octaveOffset * 12);
-    }),
-
-    // Arpeggiator for scale notes: ens.arpScale(8)
-    arpScale(pattern = 4) {
-      const sig = getStrudelSignal();
-      if (!sig) throw new Error('strudel-scalenav: signal() not found');
-      if (typeof pattern === 'number') {
-        return sig((t) => {
-          const pcs = state.scale?.pitchClasses ?? [];
-          if (!pcs.length) return 60;
-          return pcs[Math.floor(t * pattern) % pcs.length] + 60;
-        }).segment(pattern);
-      } else {
-        const indices = pattern.split(/\s+/).map(Number);
-        return sig((t) => {
-          const pcs = state.scale?.pitchClasses ?? [];
-          if (!pcs.length) return 60;
-          const idx = indices[Math.floor(t * indices.length) % indices.length];
-          return pcs[idx % pcs.length] + 60;
-        }).segment(indices.length);
-      }
-    },
-
-    // Arpeggiator for chord voicing: ens.arp(4) or ens.arpVoicing(4)
-    arp(pattern = 4) {
-      const sig = getStrudelSignal();
-      if (!sig) throw new Error('strudel-scalenav: signal() not found');
-      if (typeof pattern === 'number') {
-        // arp(4) = cycle through chord notes at rate 4
-        return sig((t) => {
-          const notes = state.chord?.voicing ?? [];
-          if (!notes.length) return 60;
-          return notes[Math.floor(t * pattern) % notes.length];
-        }).segment(pattern);
-      } else {
-        // arp("0 2 1 3") = play chord indices in that order
-        const indices = pattern.split(/\s+/).map(Number);
-        return sig((t) => {
-          const notes = state.chord?.voicing ?? [];
-          if (!notes.length) return 60;
-          const idx = indices[Math.floor(t * indices.length) % indices.length];
-          return notes[idx % notes.length];
-        }).segment(indices.length);
-      }
-    },
-
-    // Alias for clarity
-    arpVoicing(pattern = 4) {
-      return this.arp(pattern);
-    },
-
-    // Arpeggiator using closed position (octave 4): ens.arpClosed(4)
-    arpClosed(pattern = 4) {
-      const sig = getStrudelSignal();
-      if (!sig) throw new Error('strudel-scalenav: signal() not found');
-      if (typeof pattern === 'number') {
-        return sig((t) => {
-          const pcs = state.chord?.pitchClasses ?? [];
-          if (!pcs.length) return 60;
-          return pcs[Math.floor(t * pattern) % pcs.length] + 60;
-        }).segment(pattern);
-      } else {
-        const indices = pattern.split(/\s+/).map(Number);
-        return sig((t) => {
-          const pcs = state.chord?.pitchClasses ?? [];
-          if (!pcs.length) return 60;
-          const idx = indices[Math.floor(t * indices.length) % indices.length];
-          return pcs[idx % pcs.length] + 60;
-        }).segment(indices.length);
-      }
-    },
-
-    // Arpeggiator for stacked thirds (1-3-5-7-9-11-13...)
-    arpThirds(pattern = 4) {
-      const sig = getStrudelSignal();
-      if (!sig) throw new Error('strudel-scalenav: signal() not found');
-      // Helper to compute stacked third pitch
-      const getThirdPitch = (i) => {
-        const scalePCs = state.scale?.pitchClasses ?? [];
-        const chordRoot = state.chord?.root ?? 0;
-        if (!scalePCs.length) return 60;
-        let rootIndex = scalePCs.indexOf(chordRoot);
-        if (rootIndex === -1) rootIndex = 0;
-        const targetIndex = rootIndex + (i * 2);
-        const octaveOffset = Math.floor(targetIndex / scalePCs.length);
-        const wrappedIndex = ((targetIndex % scalePCs.length) + scalePCs.length) % scalePCs.length;
-        return scalePCs[wrappedIndex] + 60 + (octaveOffset * 12);
-      };
-      if (typeof pattern === 'number') {
-        return sig((t) => getThirdPitch(Math.floor(t * pattern) % pattern)).segment(pattern);
-      } else {
-        const indices = pattern.split(/\s+/).map(Number);
-        return sig((t) => {
-          const idx = indices[Math.floor(t * indices.length) % indices.length];
-          return getThirdPitch(idx);
-        }).segment(indices.length);
-      }
-    },
-
-    // Block chord from voicing (original octaves)
-    blockVoicing() {
-      const sig = getStrudelSignal();
-      if (!sig) throw new Error('strudel-scalenav: signal() not found');
-      const notes = state.chord?.voicing ?? [60];
-      const patterns = notes.map((_, i) => sig(() => chordNote(i)).segment(1));
-      if (typeof globalThis.stack === 'function') {
-        return globalThis.stack(...patterns);
-      }
-      return patterns[0];
-    },
-    block() { return this.blockVoicing(); }, // alias for backwards compat
-
-    // Block chord from closed position (octave 4)
-    blockClosed() {
-      const sig = getStrudelSignal();
-      if (!sig) throw new Error('strudel-scalenav: signal() not found');
-      const pcs = state.chord?.pitchClasses ?? [0];
-      const patterns = pcs.map((pc) => sig(() => pc + 60).segment(1));
-      if (typeof globalThis.stack === 'function') {
-        return globalThis.stack(...patterns);
-      }
-      return patterns[0];
-    },
-
-    // Block chord from stacked thirds (1-3-5-7-9-11-13...)
-    blockThirds(count = 4) {
-      const sig = getStrudelSignal();
-      if (!sig) throw new Error('strudel-scalenav: signal() not found');
-      const getThirdPitch = (i) => {
-        const scalePCs = state.scale?.pitchClasses ?? [];
-        const chordRoot = state.chord?.root ?? 0;
-        if (!scalePCs.length) return 60;
-        let rootIndex = scalePCs.indexOf(chordRoot);
-        if (rootIndex === -1) rootIndex = 0;
-        const targetIndex = rootIndex + (i * 2);
-        const octaveOffset = Math.floor(targetIndex / scalePCs.length);
-        const wrappedIndex = ((targetIndex % scalePCs.length) + scalePCs.length) % scalePCs.length;
-        return scalePCs[wrappedIndex] + 60 + (octaveOffset * 12);
-      };
-      const patterns = [];
-      for (let i = 0; i < count; i++) {
-        const idx = i;
-        patterns.push(sig(() => getThirdPitch(idx)).segment(1));
-      }
-      if (typeof globalThis.stack === 'function') {
-        return globalThis.stack(...patterns);
-      }
-      return patterns[0];
-    },
+    // Blocks (flat)
+    blockVoicing: () => voicingNamespace.block(),
+    block: () => voicingNamespace.block(),
+    blockClosed: () => closedNamespace.block(),
+    blockThirds: (count = 4) => chordThirdsNamespace.block(count),
 
     leave: async () => {
       unsubRoom();
