@@ -14,7 +14,7 @@ Connect your [Strudel](https://strudel.cc) live-coding patterns to [Scale Naviga
 Paste this into [strudel.cc](https://strudel.cc):
 
 ```js
-const { signInWithGoogle, joinEnsemble, getCurrentUser } = await import('https://cdn.jsdelivr.net/npm/strudel-scalenav/dist/strudel-scalenav.js')
+const { signInWithGoogle, joinEnsemble, getCurrentUser } = await import('https://cdn.jsdelivr.net/npm/strudel-scalenav@0.6.0/dist/strudel-scalenav.js')
 if (!getCurrentUser()) await signInWithGoogle()
 const ens = await joinEnsemble('your-room-id')
 
@@ -32,7 +32,7 @@ Whenever the Scale Navigator host changes the scale or chord, your pattern rehar
 ### In the Strudel REPL (the normal case)
 
 ```js
-const sn = await import('https://cdn.jsdelivr.net/npm/strudel-scalenav/dist/strudel-scalenav.js')
+const sn = await import('https://cdn.jsdelivr.net/npm/strudel-scalenav@0.6.0/dist/strudel-scalenav.js')
 ```
 
 ### In a Vite / bundler project using `@strudel/core`
@@ -98,11 +98,11 @@ The API is organized into clear namespaces: `ens.scale.*` and `ens.chord.*`.
 |---|---|
 | `ens.scale.pitch(i)` | i-th scale note in octave 4 |
 | `ens.scale.arp(n)` | Arpeggiate scale notes at n notes per cycle |
-| `ens.scale.block()` | All scale notes as block chord |
+| `ens.scale.block()` | All scale notes sounded together |
 
 #### `ens.scale.thirds.*`
 
-Stack thirds from the **scale root** (index 0 of the scale).
+Stack thirds from the **scale root** (index 0 of the scale). Uses the current scale root, not the chord root.
 
 | Method | Description |
 |---|---|
@@ -159,7 +159,7 @@ All index methods support negative indices: `-1` = last, `-2` = second to last, 
 
 ### Flat API (aliases)
 
-For backwards compatibility and quick access, flat methods are also available:
+For backwards compatibility and quick access, flat methods are also available. Prefer the hierarchical API for new code.
 
 | Flat Method | Equivalent |
 |---|---|
