@@ -5,6 +5,7 @@ import {
   signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  signInAnonymously,
   signOut as fbSignOut,
   onAuthStateChanged,
   updateProfile,
@@ -13,7 +14,6 @@ import {
   getFirestore,
   doc,
   setDoc,
-  updateDoc,
   deleteDoc,
   onSnapshot,
   serverTimestamp,
@@ -90,6 +90,23 @@ export async function signUpWithEmail(email, password, displayName) {
   return result.user;
 }
 
+// Invisible guest identity: no popup, no account, works in incognito/Brave.
+export async function signInAsGuest() {
+  const result = await signInAnonymously(getFbAuth());
+  return result.user;
+}
+
+// Auth state restores asynchronously after page load; wait for the first
+// onAuthStateChanged event so a persisted session isn't mistaken for "signed out".
+function waitForAuthReady() {
+  return new Promise((resolve) => {
+    const unsub = onAuthStateChanged(getFbAuth(), (user) => {
+      unsub();
+      resolve(user);
+    });
+  });
+}
+
 export async function signOut() {
   return fbSignOut(getFbAuth());
 }
@@ -107,7 +124,11 @@ export async function setDisplayName(name) {
   if (!user) throw new Error('strudel-scalenav: not signed in');
   if (!name || typeof name !== 'string') throw new Error('strudel-scalenav: setDisplayName requires a non-empty string');
   await updateProfile(user, { displayName: name });
-  await updateDoc(doc(getFbDb(), 'users', user.uid), { userName: name });
+  try {
+    await setDoc(doc(getFbDb(), 'users', user.uid), { userName: name }, { merge: true });
+  } catch (err) {
+    console.warn('[strudel-scalenav] setDisplayName: user doc update skipped:', err?.code || err);
+  }
 }
 
 async function ensureUserDoc(user, extra = {}) {
@@ -127,11 +148,17 @@ export async function joinEnsemble(roomId, options = {}) {
     throw new Error('strudel-scalenav: joinEnsemble(roomId) requires a non-empty string roomId');
   }
 
-  const user = getCurrentUser();
+  // Reuse a persisted session if one exists; otherwise silently join as a guest.
+  let user = getCurrentUser() ?? (await waitForAuthReady());
   if (!user) {
-    throw new Error(
-      'strudel-scalenav: not signed in. Call signInWithGoogle(), signInWithEmail(), or signUpWithEmail() first.',
-    );
+    try {
+      user = await signInAsGuest();
+    } catch (err) {
+      throw new Error(
+        `strudel-scalenav: could not connect (${err?.code || err?.message || err}). ` +
+          'Check your internet connection and try again.',
+      );
+    }
   }
 
   const db = getFbDb();
@@ -153,13 +180,25 @@ export async function joinEnsemble(roomId, options = {}) {
     firstSnapshotResolve = resolve;
   });
 
+  let warnedMissing = false;
   const unsubRoom = onSnapshot(
     roomRef,
     (snap) => {
       if (!snap.exists()) {
         state.connected = false;
+        if (!warnedMissing) {
+          warnedMissing = true;
+          console.warn(
+            `[strudel-scalenav] Room "${roomId}" not found. Check the spelling, ` +
+              'or ask your host for the exact room name. Still listening in case it appears...',
+          );
+        }
         firstSnapshotResolve(); // resolve even if room doesn't exist
         return;
+      }
+      if (warnedMissing) {
+        warnedMissing = false;
+        console.log(`[strudel-scalenav] Room "${roomId}" is now live. Connected.`);
       }
       const data = snap.data();
       state.raw = data;
@@ -179,7 +218,11 @@ export async function joinEnsemble(roomId, options = {}) {
       }
     },
     (err) => {
-      console.warn('[strudel-scalenav] room snapshot error:', err);
+      state.connected = false;
+      console.warn(
+        `[strudel-scalenav] Lost connection to room "${roomId}" (${err?.code || err}). ` +
+          'Your pattern keeps playing with the last known harmony. It will reconnect automatically.',
+      );
       firstSnapshotResolve(); // resolve on error too
     },
   );
@@ -187,16 +230,21 @@ export async function joinEnsemble(roomId, options = {}) {
   // Wait for first snapshot before returning
   await firstSnapshot;
 
-  await setDoc(
-    presenceRef,
-    {
-      userName: user.displayName || user.email?.split('@')[0] || 'strudel user',
-      email: user.email ?? null,
-      clientType: 'strudel',
-      joinedAt: serverTimestamp(),
-    },
-    { merge: true },
-  );
+  try {
+    await setDoc(
+      presenceRef,
+      {
+        userName: user.displayName || user.email?.split('@')[0] || 'strudel guest',
+        email: user.email ?? null,
+        clientType: 'strudel',
+        joinedAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
+  } catch (err) {
+    // Presence is a name tag, not a requirement — never block the music on it.
+    console.warn('[strudel-scalenav] could not register presence (non-fatal):', err?.code || err);
+  }
 
   // Wrap index to handle negatives: -1 = last, -2 = second to last, etc.
   const wrapIndex = (i, len) => ((i % len) + len) % len;
@@ -480,6 +528,17 @@ export async function joinEnsemble(roomId, options = {}) {
     blockClosed: () => closedNamespace.block(),
     blockThirds: (count = 4) => chordThirdsNamespace.block(count),
 
+    // Optional name tag: shows up in the room's connected-players list
+    setName: async (name) => {
+      if (!name || typeof name !== 'string') {
+        throw new Error('strudel-scalenav: setName requires a non-empty string, e.g. ens.setName("Tyler")');
+      }
+      try {
+        await updateProfile(user, { displayName: name });
+      } catch {}
+      await setDoc(presenceRef, { userName: name }, { merge: true });
+    },
+
     leave: async () => {
       unsubRoom();
       try {
@@ -492,7 +551,7 @@ export async function joinEnsemble(roomId, options = {}) {
     // Show the scale badge in Strudel REPL header area
     // Just call ens.showBadge() - it handles everything
     showBadge(options = {}) {
-      return startBadgeDrawing({ state }, options);
+      return startBadgeDrawing({ state, roomId }, options);
     },
 
     // Get current scale color

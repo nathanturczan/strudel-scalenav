@@ -216,19 +216,25 @@ export function startBadgeDrawing(stateGetter, options = {}) {
   }
 
   const ctx = getCtx();
-  let lastScale = '', lastChord = '';
+  let lastKey = null;
+
+  // Room label: rehearsal rooms are amber, everything else is "live" green.
+  const roomId = stateGetter.roomId || '';
+  const isRehearsal = roomId.startsWith('rehearse-');
+  const roomLabel = isRehearsal ? 'REHEARSAL' : 'LIVE';
+  const roomColor = isRehearsal ? '#ffab00' : '#2ecc71';
 
   function draw() {
-    const scale = stateGetter.state?.scale;
-    if (!scale) return;
-
-    const currentScale = scale.prettyName || '';
-    const currentChord = stateGetter.state?.chord?.prettyName || '';
+    const st = stateGetter.state || {};
+    const scale = st.scale;
+    const currentScale = scale?.prettyName || '';
+    const currentChord = st.chord?.prettyName || '';
+    const connected = st.connected !== false;
 
     // Only redraw if changed
-    if (currentScale === lastScale && currentChord === lastChord) return;
-    lastScale = currentScale;
-    lastChord = currentChord;
+    const key = `${connected}|${currentScale}|${currentChord}`;
+    if (key === lastKey) return;
+    lastKey = key;
 
     // Reset transform to identity (Strudel visualizers may modify it)
     ctx.resetTransform();
@@ -236,6 +242,21 @@ export function startBadgeDrawing(stateGetter, options = {}) {
     // Cover previous content with background color (avoids flicker from clearRect)
     ctx.fillStyle = '#1e1e1e';
     ctx.fillRect(x - 50, 0, 500, 80);
+
+    // Room label (top line)
+    if (roomId) {
+      ctx.font = 'bold 12px monospace';
+      ctx.fillStyle = roomColor;
+      ctx.fillText(`\u25CF ${roomLabel} \u2014 ${roomId}`, x + 70, y - 26);
+    }
+
+    // Not connected yet (room missing or connection lost)
+    if (!connected || !scale) {
+      ctx.font = '15px monospace';
+      ctx.fillStyle = '#ff6b6b';
+      ctx.fillText(`waiting for room "${roomId}"\u2026`, x + 70, y + 2);
+      return;
+    }
 
     // Draw polygon
     const color = getScaleColor(scale.root, scale.scaleClass);
