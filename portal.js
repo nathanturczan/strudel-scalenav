@@ -72,7 +72,12 @@ export function createPortalDock(roomId, options = {}) {
   const existing = document.getElementById(DOCK_ID);
   if (existing && existing.__scalenavControl) {
     const frame = existing.querySelector('iframe');
-    if (frame && frame.src !== src) frame.src = src;
+    if (frame && frame.src !== src) {
+      frame.src = src;
+      frame.title = `LALORK portal \u2014 ${roomId}`;
+    }
+    const label = existing.querySelector('span');
+    if (label) label.textContent = `LALORK PORTAL \u2014 ${roomId}`;
     existing.style.display = 'flex';
     return existing.__scalenavControl;
   }
