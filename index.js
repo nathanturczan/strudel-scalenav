@@ -21,6 +21,7 @@ import {
 
 import { resolveScale, resolveChord, pcToNoteName, midiToNoteName, formatScaleName, formatChordName } from './resolver.js';
 import { getScaleColor, getPolygonVertices, drawScaleBadge, startBadgeDrawing, PITCH_CLASS_COLORS } from './visual.js';
+import { createPortalDock } from './portal.js';
 
 const FIREBASE_CONFIG = {
   apiKey: 'AIzaSyBiTTX24mBjypGdel2ARBx0UUvFQEaRDf4',
@@ -552,6 +553,14 @@ export async function joinEnsemble(roomId, options = {}) {
     // Just call ens.showBadge() - it handles everything
     showBadge(options = {}) {
       return startBadgeDrawing({ state, roomId }, options);
+    },
+
+    // Embed the deployed Enter portal as a collapsible strip over the REPL
+    // (strudel-scalenav#5). The HUD is the portal: harmony, direction union,
+    // and form strip all render from one portal codebase — UI fixes reach
+    // Strudel the moment enter deploys, no package update needed.
+    showPortal(options = {}) {
+      return createPortalDock(roomId, options);
     },
 
     // Get current scale color

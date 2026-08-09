@@ -10,7 +10,8 @@
     "./scales": "./scales.js",
     "./chords": "./chords.js",
     "./resolver": "./resolver.js",
-    "./visual": "./visual.js"
+    "./visual": "./visual.js",
+    "./portal": "./portal.js"
   },
   "files": [
     "index.js",
@@ -18,6 +19,7 @@
     "scales.js",
     "chords.js",
     "visual.js",
+    "portal.js",
     "dist",
     "README.md",
     "LICENSE"
