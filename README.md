@@ -14,7 +14,7 @@ Connect your [Strudel](https://strudel.cc) live-coding patterns to [Scale Naviga
 Paste this into [strudel.cc](https://strudel.cc):
 
 ```js
-const { signInWithGoogle, joinEnsemble, getCurrentUser } = await import('https://cdn.jsdelivr.net/npm/strudel-scalenav@0.6.1/dist/strudel-scalenav.js')
+const { signInWithGoogle, joinEnsemble, getCurrentUser } = await import('https://cdn.jsdelivr.net/npm/strudel-scalenav@0.8.0/dist/strudel-scalenav.js')
 if (!getCurrentUser()) await signInWithGoogle()
 const ens = await joinEnsemble('your-room-id')
 
@@ -32,7 +32,7 @@ Whenever the Scale Navigator host changes the scale or chord, your pattern rehar
 ### In the Strudel REPL (the normal case)
 
 ```js
-const sn = await import('https://cdn.jsdelivr.net/npm/strudel-scalenav@0.6.1/dist/strudel-scalenav.js')
+const sn = await import('https://cdn.jsdelivr.net/npm/strudel-scalenav@0.8.0/dist/strudel-scalenav.js')
 ```
 
 ### In a Vite / bundler project using `@strudel/core`
@@ -226,8 +226,11 @@ For backwards compatibility and quick access, flat methods are also available. P
 |---|---|---|
 | `ens.scaleColor` | getter `string` | Current scale color (hex or rgb) |
 | `ens.showBadge(options?)` | function | Display scale badge in REPL header |
+| `ens.showPortal(options?)` | function | Dock the full LALORK portal (harmony, direction cues, form strip) over the REPL |
 
 Options for `showBadge`: `x` (default 480), `y` (default 38), `size` (default 26), `showText` (default true)
+
+`showPortal()` embeds the deployed Enter portal for your room as a collapsible strip at the bottom of the page. The header buttons toggle between a thin bar, a compact strip, and a full-height view; the choice is remembered per browser. Returns a control object with `expand()`, `collapse()`, `toggle()`, `hide()`, and `remove()`. Pass `{ origin }` to point at a different portal deployment.
 
 ```js
 note(ens.chord.voicing.arp(4)).s("piano")           // 4 notes per cycle
