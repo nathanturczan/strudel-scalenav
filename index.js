@@ -181,6 +181,24 @@ export async function joinEnsemble(roomId, options = {}) {
     firstSnapshotResolve = resolve;
   });
 
+  // Downbeat hold (lalork#17): rooms whose conductor broadcasts harmony
+  // ahead of the musical downbeat publish anticipationMs on the room doc
+  // (rehearse stamps 2000 on la-laptop-orchestra). Every receiver holds an
+  // incoming change that long after arrival, so the chord lands on the
+  // downbeat together across the whole ensemble (enter, Ensemble Jammer,
+  // the Ableton bridge, and Strudel). Rooms without the field apply
+  // instantly, exactly as before.
+  const readAnticipationMs = (data) => {
+    const v = data?.anticipationMs;
+    return typeof v === 'number' && isFinite(v) && v > 0 ? Math.min(v, 10000) : 0;
+  };
+  const holdTimers = new Set();
+  const clearHoldTimers = () => {
+    for (const t of holdTimers) clearTimeout(t);
+    holdTimers.clear();
+  };
+  let appliedFirst = false;
+
   let warnedMissing = false;
   const unsubRoom = onSnapshot(
     roomRef,
@@ -202,21 +220,37 @@ export async function joinEnsemble(roomId, options = {}) {
         console.log(`[strudel-scalenav] Room "${roomId}" is now live. Connected.`);
       }
       const data = snap.data();
-      state.raw = data;
-      state.scale = resolveScale(data.scaleData);
-      state.chord = resolveChord(data.chordData);
-      state.bpm = typeof data.bpm === 'number' ? data.bpm : state.bpm;
-      state.hostName = data.hostName ?? null;
-      state.roomName = data.roomName ?? null;
-      state.connected = true;
-      firstSnapshotResolve(); // resolve on first data
-      if (options.onUpdate) {
-        try {
-          options.onUpdate(state);
-        } catch (err) {
-          console.warn('[strudel-scalenav] onUpdate callback threw:', err);
+      const applySnapshot = () => {
+        state.raw = data;
+        state.scale = resolveScale(data.scaleData);
+        state.chord = resolveChord(data.chordData);
+        state.bpm = typeof data.bpm === 'number' ? data.bpm : state.bpm;
+        state.hostName = data.hostName ?? null;
+        state.roomName = data.roomName ?? null;
+        state.connected = true;
+        if (options.onUpdate) {
+          try {
+            options.onUpdate(state);
+          } catch (err) {
+            console.warn('[strudel-scalenav] onUpdate callback threw:', err);
+          }
         }
+      };
+      // The FIRST snapshot is the room's current state (a player joining
+      // mid-piece), not an early broadcast — apply it instantly. Later
+      // snapshots ARE early broadcasts: hold them for the downbeat.
+      const holdMs = appliedFirst ? readAnticipationMs(data) : 0;
+      appliedFirst = true;
+      if (holdMs > 0) {
+        const t = setTimeout(() => {
+          holdTimers.delete(t);
+          applySnapshot();
+        }, holdMs);
+        holdTimers.add(t);
+      } else {
+        applySnapshot();
       }
+      firstSnapshotResolve(); // resolve on first data (never wait out a hold)
     },
     (err) => {
       state.connected = false;
@@ -542,6 +576,7 @@ export async function joinEnsemble(roomId, options = {}) {
 
     leave: async () => {
       unsubRoom();
+      clearHoldTimers(); // a held change must not land after leaving
       try {
         await deleteDoc(presenceRef);
       } catch (err) {

@@ -14,7 +14,7 @@ Connect your [Strudel](https://strudel.cc) live-coding patterns to [Scale Naviga
 Paste this into [strudel.cc](https://strudel.cc):
 
 ```js
-const { joinEnsemble } = await import('https://cdn.jsdelivr.net/npm/strudel-scalenav@0.8.0/dist/strudel-scalenav.js')
+const { joinEnsemble } = await import('https://cdn.jsdelivr.net/npm/strudel-scalenav@0.9.0/dist/strudel-scalenav.js')
 const ens = await joinEnsemble('la-laptop-orchestra')
 ens.showPortal()
 
@@ -32,7 +32,7 @@ That's the whole setup: no sign-in step (you join invisibly as a guest), `la-lap
 ### In the Strudel REPL (the normal case)
 
 ```js
-const sn = await import('https://cdn.jsdelivr.net/npm/strudel-scalenav@0.8.0/dist/strudel-scalenav.js')
+const sn = await import('https://cdn.jsdelivr.net/npm/strudel-scalenav@0.9.0/dist/strudel-scalenav.js')
 ```
 
 ### In a Vite / bundler project using `@strudel/core`
