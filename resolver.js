@@ -38,7 +38,7 @@ function titleCaseWords(s) {
 export function formatScaleName(scaleId) {
   if (!scaleId || typeof scaleId !== 'string') return '';
 
-  const scaleData = ScaleData[scaleId];
+  const scaleData = Object.hasOwn(ScaleData, scaleId) ? ScaleData[scaleId] : undefined;
   const parts = scaleId.split('_');
   const maybeRoot = parts[0];
   const hasRootToken = PITCH_TOKENS.has(maybeRoot);
@@ -95,13 +95,13 @@ const SCALE_CLASS_TO_STRUDEL = {
 };
 
 export function pcToNoteName(pc, { flats = false } = {}) {
-  if (typeof pc !== 'number') return null;
+  if (!Number.isInteger(pc)) return null;
   const n = ((pc % 12) + 12) % 12;
   return (flats ? NOTE_NAMES_FLAT : NOTE_NAMES)[n];
 }
 
 export function midiToNoteName(midi) {
-  if (typeof midi !== 'number') return null;
+  if (!Number.isInteger(midi)) return null;
   const pc = ((midi % 12) + 12) % 12;
   const octave = Math.floor(midi / 12) - 1;
   return `${NOTE_NAMES[pc]}${octave}`;
@@ -109,7 +109,7 @@ export function midiToNoteName(midi) {
 
 export function resolveScale(scaleId) {
   if (!scaleId || typeof scaleId !== 'string') return null;
-  const raw = ScaleData[scaleId];
+  const raw = Object.hasOwn(ScaleData, scaleId) ? ScaleData[scaleId] : null;
   if (!raw) return null;
 
   const strudelClass = SCALE_CLASS_TO_STRUDEL[raw.scale_class] ?? null;
@@ -184,7 +184,7 @@ export function resolveChordInfo(info) {
 
 export function resolveChord(chordId) {
   if (!chordId || typeof chordId !== 'string') return null;
-  const raw = ChordData[chordId];
+  const raw = Object.hasOwn(ChordData, chordId) ? ChordData[chordId] : null;
   if (!raw) return null;
 
   const voicing = raw.original_voicing ?? [];
