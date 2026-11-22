@@ -483,11 +483,21 @@ export async function joinEnsemble(roomId, options = {}) {
   // === INTERNAL HELPERS ===
   // Helper to compute stacked third pitch from chord root
   const getChordThirdPitch = (i) => {
-    const scalePCs = state.scale?.pitchClasses ?? [];
+    let scalePCs = state.scale?.pitchClasses ?? [];
     const chordRoot = state.chord?.root ?? 0;
     if (!scalePCs.length) return 60;
     let rootIndex = scalePCs.indexOf(chordRoot);
-    if (rootIndex === -1) rootIndex = 0;
+    if (rootIndex === -1) {
+      // Chord root outside the scale: start on the chord root itself and
+      // continue through the scale tones above it.
+      warnOnce(
+        `thirds:${state.scale?.id}|${state.chord?.id}`,
+        `[strudel-scalenav] Chord root ${state.chord?.rootName ?? chordRoot} is not in the current scale; ` +
+          'chord.thirds starts on the chord root and continues through the scale above it.',
+      );
+      scalePCs = [...scalePCs, chordRoot].sort((a, b) => a - b);
+      rootIndex = scalePCs.indexOf(chordRoot);
+    }
     const targetIndex = rootIndex + (i * 2);
     const octaveOffset = Math.floor(targetIndex / scalePCs.length);
     const wrappedIndex = ((targetIndex % scalePCs.length) + scalePCs.length) % scalePCs.length;

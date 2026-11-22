@@ -166,7 +166,9 @@ Stack thirds from the **chord root** using the current scale. Continues up in oc
 | 6 | 13th | A5 |
 | 7 | root (2 oct) | C6 |
 
-All index methods support negative indices: `-1` = last, `-2` = second to last, etc.
+The table holds for 7-note scales. On 6-note scales (whole tone, hexatonic) the stack is an augmented triad that reaches the octave at index 3, and on octatonic scales it is a diminished seventh chord that reaches the octave at index 4. If the chord root is not a note of the current scale, the stack starts on the chord root and continues through the scale tones above it.
+
+`pitch(i)` on `ens.scale`, `ens.chord.voicing`, and `ens.chord.closed` supports negative indices: `-1` = last, `-2` = second to last, etc. The thirds helpers have no last note, so a negative index continues the stack downward: `-1` is a third below the root.
 
 ---
 
