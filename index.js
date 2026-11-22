@@ -111,6 +111,44 @@ function strudelSignal(fn, segmentRate = 1) {
   return sig(fn).segment(segmentRate);
 }
 
+// Argument checks for the pattern helpers: fail at call time with a clear
+// message instead of producing silence or NaN notes later.
+function parseIndex(i, what) {
+  const n = typeof i === 'string' && /^\s*-?\d+\s*$/.test(i) ? Number(i) : i;
+  if (typeof n !== 'number' || !Number.isInteger(n)) {
+    throw new Error(
+      `strudel-scalenav: ${what} needs a whole-number index, e.g. ${what.replace('(i)', '(0)')}. ` +
+        'Strudel patterns and mini-notation are not supported as the index.',
+    );
+  }
+  return n;
+}
+
+// arp() takes notes-per-cycle (a positive whole number) or a string of note
+// indices such as "0 2 -1 1", where any non-numeric token (e.g. "~") is a rest.
+function parseArpPattern(pattern) {
+  if (typeof pattern === 'string') {
+    const tokens = pattern.trim().split(/\s+/).filter(Boolean);
+    if (!tokens.length) throw new Error('strudel-scalenav: arp("") needs at least one index, e.g. arp("0 2 1").');
+    const indices = tokens.map((tok) => {
+      if (!/^-?\d+(\.\d+)?$/.test(tok)) return null; // rest
+      const idx = Number(tok);
+      if (!Number.isInteger(idx)) {
+        throw new Error(`strudel-scalenav: arp("${pattern}") indices must be whole numbers (got ${tok}).`);
+      }
+      return idx;
+    });
+    return { indices };
+  }
+  if (typeof pattern === 'number' && Number.isInteger(pattern) && pattern > 0) return { n: pattern };
+  throw new Error(
+    'strudel-scalenav: arp() takes a positive whole number of notes per cycle, e.g. arp(4), or a string of ' +
+      'indices, e.g. arp("0 2 -1 1"). Strudel patterns are not supported as the argument.',
+  );
+}
+
+const isNote = (v) => v !== undefined;
+
 export async function signInWithGoogle() {
   const provider = new GoogleAuthProvider();
   const result = await signInWithPopup(getFbAuth(), provider);
@@ -518,17 +556,17 @@ export async function joinEnsemble(roomId, options = {}) {
   const makeArp = (getNotes, pattern = 4) => {
     const sig = getStrudelSignal();
     if (!sig) throw new Error('strudel-scalenav: signal() not found');
-    if (typeof pattern === 'string') {
-      const indices = pattern.split(/\s+/).map(Number);
+    const { indices, n } = parseArpPattern(pattern);
+    if (indices) {
       return sig((t) => {
         const notes = getNotes();
         if (!notes.length) return 60;
         const idx = indices[Math.floor(t * indices.length) % indices.length];
-        return notes[idx % notes.length];
-      }).segment(indices.length);
+        return idx === null ? undefined : notes[wrapIndex(idx, notes.length)];
+      })
+        .segment(indices.length)
+        .filterValues(isNote);
     } else {
-      // number or fallback to 4
-      const n = typeof pattern === 'number' ? pattern : 4;
       return sig((t) => {
         const notes = getNotes();
         if (!notes.length) return 60;
@@ -560,7 +598,10 @@ export async function joinEnsemble(roomId, options = {}) {
   // ens.scale.*
   const scaleNamespace = {
     // ens.scale.pitch(i) - i-th scale note counting up from the root (root in octave 4)
-    pitch: (i) => strudelSignal(() => scaleNote(i)),
+    pitch: (i) => {
+      const idx = parseIndex(i, 'scale.pitch(i)');
+      return strudelSignal(() => scaleNote(idx));
+    },
 
     // ens.scale.arp(n) - arpeggiate scale notes
     arp: (pattern = 4) => makeArp(scaleNotesFromRoot, pattern),
@@ -571,20 +612,24 @@ export async function joinEnsemble(roomId, options = {}) {
     // ens.scale.thirds.*
     thirds: {
       // ens.scale.thirds.pitch(i) - stacked thirds from scale root
-      pitch: (i) => strudelSignal(() => getScaleThirdPitch(i)),
+      pitch: (i) => {
+        const idx = parseIndex(i, 'scale.thirds.pitch(i)');
+        return strudelSignal(() => getScaleThirdPitch(idx));
+      },
 
       // ens.scale.thirds.arp(n) - arpeggiate thirds from scale root
       arp: (pattern = 4) => {
         const sig = getStrudelSignal();
         if (!sig) throw new Error('strudel-scalenav: signal() not found');
-        if (typeof pattern === 'string') {
-          const indices = pattern.split(/\s+/).map(Number);
+        const { indices, n } = parseArpPattern(pattern);
+        if (indices) {
           return sig((t) => {
             const idx = indices[Math.floor(t * indices.length) % indices.length];
-            return getScaleThirdPitch(idx);
-          }).segment(indices.length);
+            return idx === null ? undefined : getScaleThirdPitch(idx);
+          })
+            .segment(indices.length)
+            .filterValues(isNote);
         } else {
-          const n = typeof pattern === 'number' ? pattern : 4;
           return sig((t) => getScaleThirdPitch(Math.floor(t * n) % n)).segment(n);
         }
       },
@@ -606,7 +651,10 @@ export async function joinEnsemble(roomId, options = {}) {
   // ens.chord.voicing.*
   const voicingNamespace = {
     // ens.chord.voicing.pitch(i) - i-th voicing note (original octaves)
-    pitch: (i) => strudelSignal(() => chordNote(i)),
+    pitch: (i) => {
+      const idx = parseIndex(i, 'chord.voicing.pitch(i)');
+      return strudelSignal(() => chordNote(idx));
+    },
 
     // ens.chord.voicing.arp(n) - arpeggiate voicing
     arp: (pattern = 4) => makeArp(() => state.chord?.voicing ?? [], pattern),
@@ -618,10 +666,13 @@ export async function joinEnsemble(roomId, options = {}) {
   // ens.chord.closed.*
   const closedNamespace = {
     // ens.chord.closed.pitch(i) - i-th chord note in close position, up from the root (octave 4)
-    pitch: (i) => strudelSignal(() => {
-      const notes = chordNotesFromRoot();
-      return notes.length ? notes[wrapIndex(i, notes.length)] : 60;
-    }),
+    pitch: (i) => {
+      const idx = parseIndex(i, 'chord.closed.pitch(i)');
+      return strudelSignal(() => {
+        const notes = chordNotesFromRoot();
+        return notes.length ? notes[wrapIndex(idx, notes.length)] : 60;
+      });
+    },
 
     // ens.chord.closed.arp(n) - arpeggiate closed position
     arp: (pattern = 4) => makeArp(chordNotesFromRoot, pattern),
@@ -633,20 +684,24 @@ export async function joinEnsemble(roomId, options = {}) {
   // ens.chord.thirds.*
   const chordThirdsNamespace = {
     // ens.chord.thirds.pitch(i) - stacked thirds from chord root
-    pitch: (i) => strudelSignal(() => getChordThirdPitch(i)),
+    pitch: (i) => {
+      const idx = parseIndex(i, 'chord.thirds.pitch(i)');
+      return strudelSignal(() => getChordThirdPitch(idx));
+    },
 
     // ens.chord.thirds.arp(n) - arpeggiate thirds from chord root
     arp: (pattern = 4) => {
       const sig = getStrudelSignal();
       if (!sig) throw new Error('strudel-scalenav: signal() not found');
-      if (typeof pattern === 'string') {
-        const indices = pattern.split(/\s+/).map(Number);
+      const { indices, n } = parseArpPattern(pattern);
+      if (indices) {
         return sig((t) => {
           const idx = indices[Math.floor(t * indices.length) % indices.length];
-          return getChordThirdPitch(idx);
-        }).segment(indices.length);
+          return idx === null ? undefined : getChordThirdPitch(idx);
+        })
+          .segment(indices.length)
+          .filterValues(isNote);
       } else {
-        const n = typeof pattern === 'number' ? pattern : 4;
         return sig((t) => getChordThirdPitch(Math.floor(t * n) % n)).segment(n);
       }
     },

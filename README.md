@@ -170,6 +170,8 @@ The table holds for 7-note scales. On 6-note scales (whole tone, hexatonic) the 
 
 `pitch(i)` on `ens.scale`, `ens.chord.voicing`, and `ens.chord.closed` supports negative indices: `-1` = last, `-2` = second to last, etc. The thirds helpers have no last note, so a negative index continues the stack downward: `-1` is a third below the root.
 
+`arp()` takes a positive whole number of notes per cycle, or a string of indices such as `"0 2 -1 1"` in which `~` (or any other non-numeric token) is a rest. `pitch(i)` takes a whole-number index. Any other argument, including a Strudel pattern or mini-notation, throws an error when the helper is called.
+
 ---
 
 ### Flat API (aliases)
