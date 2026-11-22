@@ -355,8 +355,7 @@ export async function joinEnsemble(roomId, options = {}) {
     await setDoc(
       presenceRef,
       {
-        userName: user.displayName || user.email?.split('@')[0] || 'strudel guest',
-        email: user.email ?? null,
+        userName: user.displayName || (user.isAnonymous ? 'strudel guest' : 'strudel user'),
         clientType: 'strudel',
         joinedAt: serverTimestamp(),
       },
