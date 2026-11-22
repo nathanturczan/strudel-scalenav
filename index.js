@@ -14,6 +14,7 @@ import {
   getFirestore,
   doc,
   setDoc,
+  getDoc,
   deleteDoc,
   onSnapshot,
   serverTimestamp,
@@ -214,6 +215,20 @@ export async function setDisplayName(name) {
 
 async function ensureUserDoc(user, extra = {}) {
   const ref = doc(getFbDb(), 'users', user.uid);
+  // Only create the document. An account that already has one (for example
+  // from another Scale Navigator app) keeps its name, photo, source and
+  // creation time.
+  let existing;
+  try {
+    existing = await getDoc(ref);
+  } catch (err) {
+    console.warn('[strudel-scalenav] could not read the user document; leaving it unchanged:', err?.code || err);
+    return;
+  }
+  if (existing.exists()) {
+    if (extra.userName) await setDoc(ref, { userName: extra.userName }, { merge: true });
+    return;
+  }
   const initial = {
     email: user.email ?? null,
     userName: extra.userName ?? user.displayName ?? (user.email ? user.email.split('@')[0] : 'strudel user'),
