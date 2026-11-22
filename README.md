@@ -2,7 +2,7 @@
 
 Connect your [Strudel](https://strudel.cc) live-coding patterns to [Scale Navigator](https://scalenavigator.app) ensembles. Join a live room and receive the host's current scale, chord, and BPM as live values you can sample in your Strudel patterns — so your algorithmic music stays harmonically locked to whoever's driving the ensemble.
 
-- **Read-only client.** Strudel users consume harmonic state; the host still drives.
+- **Read-only for harmony.** Strudel users consume harmonic state; the host still drives. The only things this package writes are your presence entry in the room and, if you sign in with an account, your user document.
 - **Live.** Updates stream via Firestore `onSnapshot`, so pattern output follows the host in real time.
 - **No account needed.** `joinEnsemble()` signs you in invisibly as a guest — no popup, works in incognito/Brave. Optionally sign in with Google or email so your display name shows up in the ensemble alongside Dashboard users.
 - **MIT-licensed, one-line import from the Strudel REPL.**
@@ -23,7 +23,7 @@ n("0 2 4 <[6,8] [7,9]>")
   .sound("piano")
 ```
 
-That's the whole setup: no sign-in step (you join invisibly as a guest), `la-laptop-orchestra` is the LA Laptop Orchestra's live room, and `showPortal()` docks the ensemble's visual portal (harmony, direction cues, form strip) under the REPL. Whenever the Scale Navigator host changes the scale or chord, your pattern reharmonizes on the next cycle — no re-evaluation needed.
+That's the whole setup: no sign-in step (you join invisibly as a guest), `la-laptop-orchestra` is the LA Laptop Orchestra's live room, and `showPortal()` docks the ensemble's visual portal (harmony, direction cues, form strip) under the REPL. Whenever the Scale Navigator host changes the scale or chord, your pattern reharmonizes as soon as the change arrives, which can be in the middle of a cycle — no re-evaluation needed.
 
 ---
 
@@ -34,6 +34,8 @@ That's the whole setup: no sign-in step (you join invisibly as a guest), `la-lap
 ```js
 const sn = await import('https://cdn.jsdelivr.net/npm/strudel-scalenav@0.9.0/dist/strudel-scalenav.js')
 ```
+
+The bundle is about 550 KB minified, because it includes the Firebase SDK and the chord table.
 
 ### In a Vite / bundler project using `@strudel/core`
 
@@ -183,6 +185,7 @@ For backwards compatibility and quick access, flat methods are also available. P
 | `ens.scalePitch(i)` | `ens.scale.pitch(i)` |
 | `ens.chordPitch(i)` | `ens.chord.voicing.pitch(i)` |
 | `ens.chordVoicingPitch(i)` | `ens.chord.voicing.pitch(i)` |
+| `ens.voicingPitch(i)` | `ens.chord.voicing.pitch(i)` |
 | `ens.closedPitch(i)` | `ens.chord.closed.pitch(i)` |
 | `ens.chordClosedPitch(i)` | `ens.chord.closed.pitch(i)` |
 | `ens.stackThird(i)` | `ens.chord.thirds.pitch(i)` |
@@ -206,10 +209,10 @@ For backwards compatibility and quick access, flat methods are also available. P
 | `ens.scaleRootNote` | signal (MIDI) | Scale root in octave 4 (playable) |
 | `ens.scalePitchClasses` | getter `number[]` | Pitch classes 0–11, in ascending numeric order (not root first) |
 | `ens.scaleNotes` | getter `number[]` | Scale notes ascending from the root in octave 4 (playable) |
-| `ens.strudelScale` | signal `string` | For `.scale()`, e.g. `"C:major"` |
+| `ens.strudelScale` | signal `string` | For `.scale()`, e.g. `"C:major"`. Roots are spelled with sharps, e.g. `"A#:major"` |
 | `ens.scaleName` | signal `string` | Raw ID, e.g. `"c_diatonic"` |
 | `ens.scaleClass` | signal `string` | e.g. `"diatonic"`, `"harmonic_minor"` |
-| `ens.scaleRootName` | signal `string` | e.g. `"C"`, `"F#"` |
+| `ens.scaleRootName` | signal `string` | e.g. `"C"`, `"F#"` (always spelled with sharps) |
 | `ens.scalePretty` | getter `string` | Pretty display: `"E♭ Diatonic"` or `"[0,2] Whole Tone"` |
 
 ### Chord data
@@ -221,8 +224,8 @@ For backwards compatibility and quick access, flat methods are also available. P
 | `ens.chordVoicing` | getter `number[]` | Original voicing (MIDI notes) |
 | `ens.chordPitchClasses` | getter `number[]` | Pitch classes 0–11, in ascending numeric order (not root first) |
 | `ens.chordClosed` | getter `number[]` | Close position ascending from the root in octave 4 (playable) |
-| `ens.chordRootName` | signal `string` | e.g. `"A"`, `"Db"` |
-| `ens.chordType` | signal `string` | e.g. `"M7"`, `"_13#9-110"` |
+| `ens.chordRootName` | signal `string` | e.g. `"A"`, `"C#"` (always spelled with sharps) |
+| `ens.chordType` | signal `string` | Raw type with a leading underscore and the voicing number, e.g. `"_M7-0"`, `"_13#9-110"` |
 | `ens.chordNoteNames` | getter `string[]` | e.g. `["G3", "Db4", "F#4"]` |
 | `ens.chordPretty` | getter `string` | Pretty display: `"A♭ m7"`, `"F♯ 13♯9"` |
 
@@ -243,10 +246,10 @@ For backwards compatibility and quick access, flat methods are also available. P
 | Property/Method | Type | Description |
 |---|---|---|
 | `ens.scaleColor` | getter `string` | Current scale color (hex or rgb) |
-| `ens.showBadge(options?)` | function | Display scale badge in REPL header |
+| `ens.showBadge(options?)` | function | Display scale badge in REPL header. Returns a function that stops the badge, or `null` when Strudel's `getDrawContext` is unavailable. Calling it again replaces the previous badge |
 | `ens.showPortal(options?)` | function | Dock the full LALORK portal (harmony, direction cues, form strip) over the REPL |
 
-Options for `showBadge`: `x` (default 480), `y` (default 38), `size` (default 26), `showText` (default true)
+Options for `showBadge`: `x` (default 480), `y` (default 38), `size` (default 26), `showText` (default true), `interval` (refresh period in ms, default 200)
 
 `showPortal()` embeds the deployed Enter portal for your room as a collapsible strip at the bottom of the page. The header buttons toggle between a thin bar, a compact strip, and a full-height view; the choice is remembered per browser. Returns a control object with `expand()`, `collapse()`, `toggle()`, `hide()`, and `remove()`. Pass `{ origin }` to point at a different portal deployment.
 
@@ -357,7 +360,7 @@ The badge automatically positions to the right of "REPL (warm)" and updates when
 
 - **Scale → Strudel mapping.** All 7 pressing scale classes map to Strudel equivalents: `diatonic` → `major`, `harmonic_minor` → `harmonic minor`, `harmonic_major` → `harmonic major`, `acoustic` → `lydian dominant`, `whole_tone` → `whole tone`, `octatonic` → `half-whole diminished`, `hexatonic` → `augmented`.
 - **Custom scales and chords.** A host's user-defined scale or chord is read from the room's `scaleInfo` / `chordInfo`. A custom scale has no Strudel scale name, so `ens.strudelScale` keeps its previous value while one is active: use the `ens.scale.*` helpers to play it. An id that cannot be resolved at all keeps the previous harmony and logs one warning.
-- **Read-only.** This package never writes changes back to the room.
+- **Read-only for harmony.** This package never changes the room's scale, chord, or BPM. It does write a presence entry under the room (your display name and client type) when you join or call `ens.setName()`, removed again by `ens.leave()`, and it creates a user document the first time you sign in with an account.
 - **Guest auth is automatic.** `joinEnsemble()` signs you in anonymously if needed; you appear to the host as "strudel guest" until you call `ens.setName()` or sign in with an account.
 
 ---
