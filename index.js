@@ -275,6 +275,7 @@ export async function joinEnsemble(roomId, options = {}) {
   activeHandles.get(roomId)?.teardown();
 
   let stopBadge = null;
+  let left = false;
   const handle = {
     presenceRef,
     teardown: () => {
@@ -709,9 +710,18 @@ export async function joinEnsemble(roomId, options = {}) {
       if (!name || typeof name !== 'string') {
         throw new Error('strudel-scalenav: setName requires a non-empty string, e.g. ens.setName("Tyler")');
       }
+      if (left) {
+        throw new Error('strudel-scalenav: setName called after leave(). Join the room again first.');
+      }
       try {
         await updateProfile(user, { displayName: name });
-      } catch {}
+      } catch (err) {
+        console.warn(
+          '[strudel-scalenav] setName: could not save the name to your profile, so it will not be ' +
+            'remembered on the next join:',
+          err?.code || err,
+        );
+      }
       await setDoc(presenceRef, { userName: name }, { merge: true });
     },
 
@@ -719,6 +729,7 @@ export async function joinEnsemble(roomId, options = {}) {
       // A handle that was already replaced by a newer join for this room must
       // not remove the presence entry the newer one is using.
       const current = activeHandles.get(roomId) === handle;
+      left = true;
       handle.teardown();
       if (!current) return;
       try {
