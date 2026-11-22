@@ -38,6 +38,25 @@ const APP_NAME = 'strudel-scalenav';
 // Upper bound on simultaneous voices in a block() chord.
 const MAX_BLOCK_VOICES = 16;
 
+// One live handle per room. The documented usage re-runs joinEnsemble() on
+// every evaluation, so a new join for the same room replaces the previous
+// handle (listener, timers, badge) instead of stacking another one.
+const activeHandles = new Map(); // roomId -> { teardown, presenceRef }
+let unloadRegistered = false;
+let stopActiveBadge = null;
+
+function registerUnloadOnce() {
+  if (unloadRegistered || typeof window === 'undefined') return;
+  unloadRegistered = true;
+  window.addEventListener('beforeunload', () => {
+    for (const handle of activeHandles.values()) {
+      try {
+        deleteDoc(handle.presenceRef).catch(() => {});
+      } catch {}
+    }
+  });
+}
+
 function getFbApp() {
   const existing = getApps().find((a) => a.name === APP_NAME);
   if (existing) return existing;
@@ -213,6 +232,24 @@ export async function joinEnsemble(roomId, options = {}) {
     console.warn(message);
   };
 
+  // Replace any earlier handle for this room (see activeHandles).
+  activeHandles.get(roomId)?.teardown();
+
+  let stopBadge = null;
+  const handle = {
+    presenceRef,
+    teardown: () => {
+      unsubRoom();
+      clearHoldTimers(); // a held change must not land after leaving
+      if (stopBadge) {
+        stopBadge();
+        if (stopActiveBadge === stopBadge) stopActiveBadge = null;
+        stopBadge = null;
+      }
+      if (activeHandles.get(roomId) === handle) activeHandles.delete(roomId);
+    },
+  };
+
   let warnedMissing = false;
   const unsubRoom = onSnapshot(
     roomRef,
@@ -307,6 +344,9 @@ export async function joinEnsemble(roomId, options = {}) {
       firstSnapshotResolve(); // resolve on error too
     },
   );
+
+  activeHandles.set(roomId, handle);
+  registerUnloadOnce();
 
   // Wait for first snapshot before returning
   await firstSnapshot;
@@ -630,8 +670,11 @@ export async function joinEnsemble(roomId, options = {}) {
     },
 
     leave: async () => {
-      unsubRoom();
-      clearHoldTimers(); // a held change must not land after leaving
+      // A handle that was already replaced by a newer join for this room must
+      // not remove the presence entry the newer one is using.
+      const current = activeHandles.get(roomId) === handle;
+      handle.teardown();
+      if (!current) return;
       try {
         await deleteDoc(presenceRef);
       } catch (err) {
@@ -641,8 +684,13 @@ export async function joinEnsemble(roomId, options = {}) {
 
     // Show the scale badge in Strudel REPL header area
     // Just call ens.showBadge() - it handles everything
+    // Only one badge runs at a time: calling it again replaces the previous one.
+    // Returns a function that stops the badge (null if drawing is unavailable).
     showBadge(options = {}) {
-      return startBadgeDrawing({ state, roomId }, options);
+      if (stopActiveBadge) stopActiveBadge();
+      stopBadge = startBadgeDrawing({ state, roomId }, options);
+      stopActiveBadge = stopBadge;
+      return stopBadge;
     },
 
     // Embed the deployed Enter portal as a collapsible strip over the REPL
@@ -659,18 +707,6 @@ export async function joinEnsemble(roomId, options = {}) {
       return s ? getScaleColor(s.root, s.scaleClass) : '#ffffff';
     },
   };
-
-  if (typeof window !== 'undefined') {
-    window.addEventListener(
-      'beforeunload',
-      () => {
-        try {
-          deleteDoc(presenceRef);
-        } catch {}
-      },
-      { once: true },
-    );
-  }
 
   return api;
 }
