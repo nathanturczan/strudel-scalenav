@@ -35,6 +35,9 @@ const FIREBASE_CONFIG = {
 
 const APP_NAME = 'strudel-scalenav';
 
+// Upper bound on simultaneous voices in a block() chord.
+const MAX_BLOCK_VOICES = 16;
+
 function getFbApp() {
   const existing = getApps().find((a) => a.name === APP_NAME);
   if (existing) return existing;
@@ -344,8 +347,17 @@ export async function joinEnsemble(roomId, options = {}) {
   const makeBlock = (getNotes) => {
     const sig = getStrudelSignal();
     if (!sig) throw new Error('strudel-scalenav: signal() not found');
-    const notes = getNotes();
-    const patterns = notes.map((n) => sig(() => n).segment(1));
+    // Each voice reads the live notes on every query, so the block follows
+    // harmony changes. The voice count can change with the chord, so build a
+    // fixed number of voices and let the unused ones rest.
+    const patterns = [];
+    for (let k = 0; k < MAX_BLOCK_VOICES; k++) {
+      patterns.push(
+        sig(() => getNotes()[k])
+          .segment(1)
+          .filterValues((v) => v !== undefined),
+      );
+    }
     if (typeof globalThis.stack === 'function') {
       return globalThis.stack(...patterns);
     }
