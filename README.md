@@ -45,7 +45,7 @@ npm install strudel-scalenav firebase
 import { joinEnsemble } from 'strudel-scalenav'
 ```
 
-You must have `@strudel/core`'s `signal` available in global scope (the REPL does this for you; in a bundler project, expose it yourself: `globalThis.signal = signal`).
+You must have `@strudel/core`'s `signal` and `stack` available in global scope (the REPL does this for you; in a bundler project, expose them yourself: `globalThis.signal = signal; globalThis.stack = stack`). `signal` is needed by every helper and `stack` by the `block()` helpers. `ens.showBadge()` additionally needs Strudel's `getDrawContext` as a global.
 
 ---
 

@@ -79,6 +79,23 @@ function getStrudelSignal() {
   return null;
 }
 
+// Combine block-chord voices with Strudel's stack(). Looked up like signal().
+function strudelStack(patterns) {
+  const stack =
+    (typeof window !== 'undefined' && typeof window.stack === 'function' && window.stack) ||
+    (typeof globalThis.stack === 'function' && globalThis.stack) ||
+    (typeof globalThis.strudel?.stack === 'function' && globalThis.strudel.stack) ||
+    null;
+  if (!stack) {
+    throw new Error(
+      'strudel-scalenav: Strudel `stack()` not found, which block() needs. ' +
+        'Run this inside the Strudel REPL (strudel.cc) or expose it yourself: ' +
+        '`import { stack } from "@strudel/core"; globalThis.stack = stack`.',
+    );
+  }
+  return stack(...patterns);
+}
+
 function strudelSignal(fn, segmentRate = 1) {
   const sig = getStrudelSignal();
   if (!sig) {
@@ -479,10 +496,7 @@ export async function joinEnsemble(roomId, options = {}) {
           .filterValues((v) => v !== undefined),
       );
     }
-    if (typeof globalThis.stack === 'function') {
-      return globalThis.stack(...patterns);
-    }
-    return patterns[0];
+    return strudelStack(patterns);
   };
 
   // === HIERARCHICAL NAMESPACE OBJECTS ===
@@ -528,10 +542,7 @@ export async function joinEnsemble(roomId, options = {}) {
           const idx = i;
           patterns.push(sig(() => getScaleThirdPitch(idx)).segment(1));
         }
-        if (typeof globalThis.stack === 'function') {
-          return globalThis.stack(...patterns);
-        }
-        return patterns[0];
+        return strudelStack(patterns);
       },
     },
   };
@@ -594,10 +605,7 @@ export async function joinEnsemble(roomId, options = {}) {
         const idx = i;
         patterns.push(sig(() => getChordThirdPitch(idx)).segment(1));
       }
-      if (typeof globalThis.stack === 'function') {
-        return globalThis.stack(...patterns);
-      }
-      return patterns[0];
+      return strudelStack(patterns);
     },
   };
 
