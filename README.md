@@ -109,8 +109,8 @@ The API is organized into clear namespaces: `ens.scale.*` and `ens.chord.*`.
 
 | Method | Description |
 |---|---|
-| `ens.scale.pitch(i)` | i-th scale note in octave 4 |
-| `ens.scale.arp(n)` | Arpeggiate scale notes at n notes per cycle |
+| `ens.scale.pitch(i)` | i-th scale note counting up from the scale root (root in octave 4) |
+| `ens.scale.arp(n)` | Arpeggiate scale notes upward from the root at n notes per cycle |
 | `ens.scale.block()` | All scale notes sounded together |
 
 #### `ens.scale.thirds.*`
@@ -135,7 +135,7 @@ Access the host's original chord voicing (preserves octave placement).
 
 #### `ens.chord.closed.*`
 
-Close-position chord (all pitch classes in octave 4).
+Close-position chord: all pitch classes stacked upward from the chord root in octave 4. A rootless voicing starts from its first note above the root.
 
 | Method | Description |
 |---|---|
@@ -200,8 +200,8 @@ For backwards compatibility and quick access, flat methods are also available. P
 |---|---|---|
 | `ens.scaleRoot` | signal (0–11) | Pitch class of scale root |
 | `ens.scaleRootNote` | signal (MIDI) | Scale root in octave 4 (playable) |
-| `ens.scalePitchClasses` | getter `number[]` | Pitch classes 0–11 |
-| `ens.scaleNotes` | getter `number[]` | Scale notes in octave 4 (playable) |
+| `ens.scalePitchClasses` | getter `number[]` | Pitch classes 0–11, in ascending numeric order (not root first) |
+| `ens.scaleNotes` | getter `number[]` | Scale notes ascending from the root in octave 4 (playable) |
 | `ens.strudelScale` | signal `string` | For `.scale()`, e.g. `"C:major"` |
 | `ens.scaleName` | signal `string` | Raw ID, e.g. `"c_diatonic"` |
 | `ens.scaleClass` | signal `string` | e.g. `"diatonic"`, `"harmonic_minor"` |
@@ -215,8 +215,8 @@ For backwards compatibility and quick access, flat methods are also available. P
 | `ens.chordRoot` | signal (0–11) | Pitch class of chord root |
 | `ens.chordRootNote` | signal (MIDI) | Chord root in octave 2 (bass) |
 | `ens.chordVoicing` | getter `number[]` | Original voicing (MIDI notes) |
-| `ens.chordPitchClasses` | getter `number[]` | Pitch classes 0–11 |
-| `ens.chordClosed` | getter `number[]` | Close position in octave 4 (playable) |
+| `ens.chordPitchClasses` | getter `number[]` | Pitch classes 0–11, in ascending numeric order (not root first) |
+| `ens.chordClosed` | getter `number[]` | Close position ascending from the root in octave 4 (playable) |
 | `ens.chordRootName` | signal `string` | e.g. `"A"`, `"Db"` |
 | `ens.chordType` | signal `string` | e.g. `"M7"`, `"_13#9-110"` |
 | `ens.chordNoteNames` | getter `string[]` | e.g. `["G3", "Db4", "F#4"]` |

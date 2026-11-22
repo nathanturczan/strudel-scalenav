@@ -454,9 +454,26 @@ export async function joinEnsemble(roomId, options = {}) {
   // Wrap index to handle negatives: -1 = last, -2 = second to last, etc.
   const wrapIndex = (i, len) => ((i % len) + len) % len;
 
-  const scalePC = (i) => {
-    const pcs = state.scale?.pitchClasses ?? [];
-    return pcs.length ? pcs[wrapIndex(i, pcs.length)] : 0;
+  // Pitch classes are stored in ascending numeric order (C upward). Return them
+  // as MIDI notes ascending from the root in octave 4 instead, carrying notes
+  // that wrap below the root up an octave. When the root is not among the
+  // notes (rootless voicings), start from the first note above it.
+  const notesFromRoot = (pcs, root) => {
+    if (!pcs.length) return [];
+    let start = pcs.findIndex((pc) => pc >= root);
+    if (start === -1) start = 0;
+    const first = pcs[start];
+    return pcs.map((_, k) => {
+      const pc = pcs[(start + k) % pcs.length];
+      return pc + 60 + (pc < first ? 12 : 0);
+    });
+  };
+  const scaleNotesFromRoot = () => notesFromRoot(state.scale?.pitchClasses ?? [], state.scale?.root ?? 0);
+  const chordNotesFromRoot = () => notesFromRoot(state.chord?.pitchClasses ?? [], state.chord?.root ?? 0);
+
+  const scaleNote = (i) => {
+    const notes = scaleNotesFromRoot();
+    return notes.length ? notes[wrapIndex(i, notes.length)] : 60;
   };
   const chordNote = (i) => {
     const notes = state.chord?.voicing ?? [];
@@ -479,12 +496,12 @@ export async function joinEnsemble(roomId, options = {}) {
 
   // Helper to compute stacked third pitch from scale root (index 0)
   const getScaleThirdPitch = (i) => {
-    const scalePCs = state.scale?.pitchClasses ?? [];
-    if (!scalePCs.length) return 60;
+    const notes = scaleNotesFromRoot();
+    if (!notes.length) return 60;
     const targetIndex = i * 2;
-    const octaveOffset = Math.floor(targetIndex / scalePCs.length);
-    const wrappedIndex = ((targetIndex % scalePCs.length) + scalePCs.length) % scalePCs.length;
-    return scalePCs[wrappedIndex] + 60 + (octaveOffset * 12);
+    const octaveOffset = Math.floor(targetIndex / notes.length);
+    const wrappedIndex = ((targetIndex % notes.length) + notes.length) % notes.length;
+    return notes[wrappedIndex] + (octaveOffset * 12);
   };
 
   // Generic arp helper
@@ -532,14 +549,14 @@ export async function joinEnsemble(roomId, options = {}) {
 
   // ens.scale.*
   const scaleNamespace = {
-    // ens.scale.pitch(i) - i-th scale note in octave 4
-    pitch: (i) => strudelSignal(() => scalePC(i) + 60),
+    // ens.scale.pitch(i) - i-th scale note counting up from the root (root in octave 4)
+    pitch: (i) => strudelSignal(() => scaleNote(i)),
 
     // ens.scale.arp(n) - arpeggiate scale notes
-    arp: (pattern = 4) => makeArp(() => (state.scale?.pitchClasses ?? []).map(pc => pc + 60), pattern),
+    arp: (pattern = 4) => makeArp(scaleNotesFromRoot, pattern),
 
     // ens.scale.block() - all scale notes as block chord
-    block: () => makeBlock(() => (state.scale?.pitchClasses ?? []).map(pc => pc + 60)),
+    block: () => makeBlock(scaleNotesFromRoot),
 
     // ens.scale.thirds.*
     thirds: {
@@ -590,18 +607,17 @@ export async function joinEnsemble(roomId, options = {}) {
 
   // ens.chord.closed.*
   const closedNamespace = {
-    // ens.chord.closed.pitch(i) - i-th chord note in close position (octave 4)
+    // ens.chord.closed.pitch(i) - i-th chord note in close position, up from the root (octave 4)
     pitch: (i) => strudelSignal(() => {
-      const pcs = state.chord?.pitchClasses ?? [];
-      const pc = pcs.length ? pcs[wrapIndex(i, pcs.length)] : 0;
-      return pc + 60;
+      const notes = chordNotesFromRoot();
+      return notes.length ? notes[wrapIndex(i, notes.length)] : 60;
     }),
 
     // ens.chord.closed.arp(n) - arpeggiate closed position
-    arp: (pattern = 4) => makeArp(() => (state.chord?.pitchClasses ?? []).map(pc => pc + 60), pattern),
+    arp: (pattern = 4) => makeArp(chordNotesFromRoot, pattern),
 
     // ens.chord.closed.block() - all closed position notes as block chord
-    block: () => makeBlock(() => (state.chord?.pitchClasses ?? [0]).map(pc => pc + 60)),
+    block: () => makeBlock(() => (state.chord ? chordNotesFromRoot() : [60])),
   };
 
   // ens.chord.thirds.*
@@ -662,7 +678,7 @@ export async function joinEnsemble(roomId, options = {}) {
       return state.scale?.pitchClasses ?? [];
     },
     get scaleNotes() {
-      return (state.scale?.pitchClasses ?? []).map(pc => pc + 60);
+      return scaleNotesFromRoot();
     },
     strudelScale: strudelSignal(() => state.scale?.strudelScale ?? lastStrudelScale ?? 'C:major'),
     scaleName: strudelSignal(() => state.scale?.id ?? 'unknown'),
@@ -682,7 +698,7 @@ export async function joinEnsemble(roomId, options = {}) {
       return state.chord?.pitchClasses ?? [];
     },
     get chordClosed() {
-      return (state.chord?.pitchClasses ?? []).map(pc => pc + 60);
+      return chordNotesFromRoot();
     },
     chordRootName: strudelSignal(() => state.chord?.rootName ?? 'C'),
     chordType: strudelSignal(() => state.chord?.chordType ?? 'unknown'),
