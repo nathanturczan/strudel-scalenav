@@ -220,6 +220,28 @@ export async function joinEnsemble(roomId, options = {}) {
     holdTimers.clear();
   };
   let appliedFirst = false;
+  // Held harmony changes are numbered so an older one can never land after a
+  // newer one has been applied.
+  let harmonySeq = 0;
+  let appliedSeq = 0;
+  let lastHarmonyKey = null;
+  const harmonyKeyOf = (data) =>
+    JSON.stringify([
+      data.scaleData ?? null,
+      data.chordData ?? null,
+      data.scaleInfo?.root,
+      data.scaleInfo?.pitchClasses,
+      data.chordInfo?.root,
+      data.chordInfo?.pitchClasses,
+      data.chordInfo?.voicing,
+    ]);
+  // A held change belongs to the connection it arrived on: drop it when the
+  // room goes away, and treat the next snapshot as the room's current state.
+  const dropHeldChanges = () => {
+    clearHoldTimers();
+    appliedFirst = false;
+    lastHarmonyKey = null;
+  };
 
   // An inline scaleInfo/chordInfo is only trusted when it describes the id
   // currently on the room document (a stale one may sit beside a newer id).
@@ -256,6 +278,7 @@ export async function joinEnsemble(roomId, options = {}) {
     (snap) => {
       if (!snap.exists()) {
         state.connected = false;
+        dropHeldChanges();
         if (!warnedMissing) {
           warnedMissing = true;
           console.warn(
@@ -271,8 +294,7 @@ export async function joinEnsemble(roomId, options = {}) {
         console.log(`[strudel-scalenav] Room "${roomId}" is now live. Connected.`);
       }
       const data = snap.data();
-      const applySnapshot = () => {
-        state.raw = data;
+      const applyHarmony = () => {
         // Bundled tables first; then the self-contained scaleInfo/chordInfo
         // the host writes for custom harmony. When neither resolves, keep the
         // last known harmony instead of dropping to a default.
@@ -307,10 +329,8 @@ export async function joinEnsemble(roomId, options = {}) {
             `[strudel-scalenav] Unknown chord "${data.chordData}". Keeping the previous chord.`,
           );
         }
-        state.bpm = typeof data.bpm === 'number' ? data.bpm : state.bpm;
-        state.hostName = data.hostName ?? null;
-        state.roomName = data.roomName ?? null;
-        state.connected = true;
+      };
+      const notify = () => {
         if (options.onUpdate) {
           try {
             options.onUpdate(state);
@@ -319,24 +339,43 @@ export async function joinEnsemble(roomId, options = {}) {
           }
         }
       };
+      // Only harmony is held for the downbeat; everything else applies now.
+      state.raw = data;
+      state.bpm = typeof data.bpm === 'number' ? data.bpm : state.bpm;
+      state.hostName = data.hostName ?? null;
+      state.roomName = data.roomName ?? null;
+      state.connected = true;
+
+      const harmonyKey = harmonyKeyOf(data);
+      const harmonyChanged = harmonyKey !== lastHarmonyKey;
+      lastHarmonyKey = harmonyKey;
       // The FIRST snapshot is the room's current state (a player joining
       // mid-piece), not an early broadcast — apply it instantly. Later
       // snapshots ARE early broadcasts: hold them for the downbeat.
-      const holdMs = appliedFirst ? readAnticipationMs(data) : 0;
+      const holdMs = appliedFirst && harmonyChanged ? readAnticipationMs(data) : 0;
       appliedFirst = true;
-      if (holdMs > 0) {
-        const t = setTimeout(() => {
-          holdTimers.delete(t);
-          applySnapshot();
-        }, holdMs);
-        holdTimers.add(t);
-      } else {
-        applySnapshot();
+      if (harmonyChanged) {
+        const seq = ++harmonySeq;
+        if (holdMs > 0) {
+          const t = setTimeout(() => {
+            holdTimers.delete(t);
+            if (seq < appliedSeq) return; // a newer change already landed
+            appliedSeq = seq;
+            applyHarmony();
+            notify();
+          }, holdMs);
+          holdTimers.add(t);
+        } else {
+          appliedSeq = seq;
+          applyHarmony();
+        }
       }
+      notify();
       firstSnapshotResolve(); // resolve on first data (never wait out a hold)
     },
     (err) => {
       state.connected = false;
+      dropHeldChanges();
       console.warn(
         `[strudel-scalenav] Lost connection to room "${roomId}" (${err?.code || err}). ` +
           'Your pattern keeps playing with the last known harmony. It will reconnect automatically.',
