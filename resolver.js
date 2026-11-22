@@ -128,6 +128,60 @@ export function resolveScale(scaleId) {
   };
 }
 
+const isPitchClass = (v) => typeof v === 'number' && isFinite(v) && v >= 0 && v < 12;
+const isMidiNote = (v) => typeof v === 'number' && isFinite(v);
+
+// Build a scale from a self-contained `scaleInfo` object, as hosts write on
+// the room document for scales that are not in the bundled table. Returns
+// null when the object is missing or malformed.
+export function resolveScaleInfo(info) {
+  if (!info || typeof info !== 'object') return null;
+  const { root, pitchClasses } = info;
+  if (!isPitchClass(root)) return null;
+  if (!Array.isArray(pitchClasses) || !pitchClasses.length || !pitchClasses.every(isPitchClass)) return null;
+
+  const id = typeof info.id === 'string' && info.id ? info.id : 'custom';
+  return {
+    id,
+    root,
+    rootName: pcToNoteName(root) ?? null,
+    pitchClasses: [...new Set(pitchClasses)].sort((a, b) => a - b),
+    scaleClass: typeof info.scaleClass === 'string' && info.scaleClass ? info.scaleClass : 'custom',
+    strudelScale: null, // no Strudel scale name for a user-defined collection
+    prettyName: typeof info.name === 'string' && info.name ? info.name : id,
+    isCustom: true,
+  };
+}
+
+// Build a chord from a self-contained `chordInfo` object (see resolveScaleInfo).
+export function resolveChordInfo(info) {
+  if (!info || typeof info !== 'object') return null;
+  if (!isPitchClass(info.root)) return null;
+
+  const hasVoicing = Array.isArray(info.voicing) && info.voicing.length > 0 && info.voicing.every(isMidiNote);
+  const hasPitchClasses =
+    Array.isArray(info.pitchClasses) && info.pitchClasses.length > 0 && info.pitchClasses.every(isPitchClass);
+  if (!hasVoicing && !hasPitchClasses) return null;
+
+  const rawPitchClasses = hasPitchClasses ? info.pitchClasses : info.voicing.map((m) => ((m % 12) + 12) % 12);
+  const pitchClasses = [...new Set(rawPitchClasses)].sort((a, b) => a - b);
+  const voicing = hasVoicing ? [...info.voicing] : pitchClasses.map((pc) => pc + 60);
+  const id = typeof info.id === 'string' && info.id ? info.id : 'custom';
+  const name = typeof info.name === 'string' && info.name ? info.name : 'custom';
+
+  return {
+    id,
+    root: info.root,
+    rootName: pcToNoteName(info.root) ?? null,
+    chordType: name,
+    voicing,
+    noteNames: voicing.map((m) => (Number.isInteger(m) ? midiToNoteName(m) : String(m))),
+    pitchClasses,
+    prettyName: name,
+    isCustom: true,
+  };
+}
+
 export function resolveChord(chordId) {
   if (!chordId || typeof chordId !== 'string') return null;
   const raw = ChordData[chordId];

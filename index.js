@@ -19,7 +19,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 
-import { resolveScale, resolveChord, pcToNoteName, midiToNoteName, formatScaleName, formatChordName } from './resolver.js';
+import { resolveScale, resolveChord, resolveScaleInfo, resolveChordInfo, pcToNoteName, midiToNoteName, formatScaleName, formatChordName } from './resolver.js';
 import { getScaleColor, getPolygonVertices, drawScaleBadge, startBadgeDrawing, PITCH_CLASS_COLORS } from './visual.js';
 import { createPortalDock } from './portal.js';
 
@@ -202,6 +202,17 @@ export async function joinEnsemble(roomId, options = {}) {
   };
   let appliedFirst = false;
 
+  // An inline scaleInfo/chordInfo is only trusted when it describes the id
+  // currently on the room document (a stale one may sit beside a newer id).
+  const infoMatches = (info, id) => !!info && (info.id === undefined || info.id === id);
+  let lastStrudelScale = null;
+  const warned = new Set();
+  const warnOnce = (key, message) => {
+    if (warned.has(key)) return;
+    warned.add(key);
+    console.warn(message);
+  };
+
   let warnedMissing = false;
   const unsubRoom = onSnapshot(
     roomRef,
@@ -225,8 +236,40 @@ export async function joinEnsemble(roomId, options = {}) {
       const data = snap.data();
       const applySnapshot = () => {
         state.raw = data;
-        state.scale = resolveScale(data.scaleData);
-        state.chord = resolveChord(data.chordData);
+        // Bundled tables first; then the self-contained scaleInfo/chordInfo
+        // the host writes for custom harmony. When neither resolves, keep the
+        // last known harmony instead of dropping to a default.
+        const scale =
+          resolveScale(data.scaleData) ??
+          (infoMatches(data.scaleInfo, data.scaleData) ? resolveScaleInfo(data.scaleInfo) : null);
+        if (scale) {
+          state.scale = scale;
+          if (scale.strudelScale) {
+            lastStrudelScale = scale.strudelScale;
+          } else {
+            warnOnce(
+              `noname:${scale.id}`,
+              `[strudel-scalenav] Scale "${scale.prettyName}" has no Strudel scale name, so ens.strudelScale keeps its ` +
+                'previous value. Use the ens.scale.* helpers to play it.',
+            );
+          }
+        } else if (data.scaleData) {
+          warnOnce(
+            `scale:${data.scaleData}`,
+            `[strudel-scalenav] Unknown scale "${data.scaleData}". Keeping the previous scale.`,
+          );
+        }
+        const chord =
+          resolveChord(data.chordData) ??
+          (infoMatches(data.chordInfo, data.chordData) ? resolveChordInfo(data.chordInfo) : null);
+        if (chord) {
+          state.chord = chord;
+        } else if (data.chordData) {
+          warnOnce(
+            `chord:${data.chordData}`,
+            `[strudel-scalenav] Unknown chord "${data.chordData}". Keeping the previous chord.`,
+          );
+        }
         state.bpm = typeof data.bpm === 'number' ? data.bpm : state.bpm;
         state.hostName = data.hostName ?? null;
         state.roomName = data.roomName ?? null;
@@ -506,7 +549,7 @@ export async function joinEnsemble(roomId, options = {}) {
     get scaleNotes() {
       return (state.scale?.pitchClasses ?? []).map(pc => pc + 60);
     },
-    strudelScale: strudelSignal(() => state.scale?.strudelScale ?? 'C:major'),
+    strudelScale: strudelSignal(() => state.scale?.strudelScale ?? lastStrudelScale ?? 'C:major'),
     scaleName: strudelSignal(() => state.scale?.id ?? 'unknown'),
     scaleClass: strudelSignal(() => state.scale?.scaleClass ?? 'unknown'),
     scaleRootName: strudelSignal(() => state.scale?.rootName ?? 'C'),
@@ -632,5 +675,5 @@ export async function joinEnsemble(roomId, options = {}) {
   return api;
 }
 
-export { pcToNoteName, midiToNoteName, resolveScale, resolveChord, formatScaleName, formatChordName };
+export { pcToNoteName, midiToNoteName, resolveScale, resolveChord, resolveScaleInfo, resolveChordInfo, formatScaleName, formatChordName };
 export { getScaleColor, getPolygonVertices, drawScaleBadge, PITCH_CLASS_COLORS };
