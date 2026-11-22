@@ -35,6 +35,9 @@ const FIREBASE_CONFIG = {
 
 const APP_NAME = 'strudel-scalenav';
 
+// How long joinEnsemble() waits for the room's first response before returning.
+const FIRST_SNAPSHOT_TIMEOUT_MS = 10000;
+
 // Upper bound on simultaneous voices in a block() chord.
 const MAX_BLOCK_VOICES = 16;
 
@@ -396,7 +399,8 @@ export async function joinEnsemble(roomId, options = {}) {
       dropHeldChanges();
       console.warn(
         `[strudel-scalenav] Lost connection to room "${roomId}" (${err?.code || err}). ` +
-          'Your pattern keeps playing with the last known harmony. It will reconnect automatically.',
+          'Your pattern keeps playing with the last known harmony. This connection is closed: ' +
+          'run joinEnsemble() again to reconnect.',
       );
       firstSnapshotResolve(); // resolve on error too
     },
@@ -405,22 +409,46 @@ export async function joinEnsemble(roomId, options = {}) {
   activeHandles.set(roomId, handle);
   registerUnloadOnce();
 
-  // Wait for first snapshot before returning
-  await firstSnapshot;
-
-  try {
-    await setDoc(
-      presenceRef,
-      {
-        userName: user.displayName || (user.isAnonymous ? 'strudel guest' : 'strudel user'),
-        clientType: 'strudel',
-        joinedAt: serverTimestamp(),
-      },
-      { merge: true },
+  // Wait for first snapshot before returning, but not forever: with no network
+  // neither listener callback fires, and the rest of the user's code would
+  // never run.
+  const timeoutMs =
+    typeof options.timeoutMs === 'number' && options.timeoutMs > 0 ? options.timeoutMs : FIRST_SNAPSHOT_TIMEOUT_MS;
+  let timeoutId;
+  const timedOut = await Promise.race([
+    firstSnapshot.then(() => false),
+    new Promise((resolve) => {
+      timeoutId = setTimeout(() => resolve(true), timeoutMs);
+    }),
+  ]);
+  clearTimeout(timeoutId);
+  if (timedOut) {
+    console.warn(
+      `[strudel-scalenav] No response from room "${roomId}" after ${Math.round(timeoutMs / 1000)}s. ` +
+        'Check your internet connection. Still listening: harmony will follow once the room responds.',
     );
-  } catch (err) {
-    // Presence is a name tag, not a requirement — never block the music on it.
-    console.warn('[strudel-scalenav] could not register presence (non-fatal):', err?.code || err);
+  }
+
+  const registerPresence = async () => {
+    try {
+      await setDoc(
+        presenceRef,
+        {
+          userName: user.displayName || (user.isAnonymous ? 'strudel guest' : 'strudel user'),
+          clientType: 'strudel',
+          joinedAt: serverTimestamp(),
+        },
+        { merge: true },
+      );
+    } catch (err) {
+      // Presence is a name tag, not a requirement — never block the music on it.
+      console.warn('[strudel-scalenav] could not register presence (non-fatal):', err?.code || err);
+    }
+  };
+  if (timedOut) {
+    registerPresence(); // the write also waits for the network; do not wait with it
+  } else {
+    await registerPresence();
   }
 
   // Wrap index to handle negatives: -1 = last, -2 = second to last, etc.
