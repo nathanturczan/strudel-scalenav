@@ -349,7 +349,7 @@ The badge automatically positions to the right of "REPL (warm)" and updates when
 
 ## Caveats
 
-- **Scale → Strudel mapping.** All 7 pressing scale classes map to Strudel equivalents: `diatonic` → `major`, `harmonic_minor` → `harmonic minor`, `harmonic_major` → `harmonic major`, `acoustic` → `lydian dominant`, `whole_tone` → `whole tone`, `octatonic` → `diminished`, `hexatonic` → `augmented`.
+- **Scale → Strudel mapping.** All 7 pressing scale classes map to Strudel equivalents: `diatonic` → `major`, `harmonic_minor` → `harmonic minor`, `harmonic_major` → `harmonic major`, `acoustic` → `lydian dominant`, `whole_tone` → `whole tone`, `octatonic` → `half-whole diminished`, `hexatonic` → `augmented`.
 - **Read-only.** This package never writes changes back to the room.
 - **Guest auth is automatic.** `joinEnsemble()` signs you in anonymously if needed; you appear to the host as "strudel guest" until you call `ens.setName()` or sign in with an account.
 

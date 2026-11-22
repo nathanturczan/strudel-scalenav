@@ -90,7 +90,7 @@ const SCALE_CLASS_TO_STRUDEL = {
   harmonic_major: 'harmonic major',
   acoustic: 'lydian dominant',
   whole_tone: 'whole tone',
-  octatonic: 'diminished',
+  octatonic: 'half-whole diminished',
   hexatonic: 'augmented',
 };
 
