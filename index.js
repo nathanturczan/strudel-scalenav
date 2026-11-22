@@ -14,12 +14,13 @@ import {
   getFirestore,
   doc,
   setDoc,
+  getDoc,
   deleteDoc,
   onSnapshot,
   serverTimestamp,
 } from 'firebase/firestore';
 
-import { resolveScale, resolveChord, pcToNoteName, midiToNoteName, formatScaleName, formatChordName } from './resolver.js';
+import { resolveScale, resolveChord, resolveScaleInfo, resolveChordInfo, pcToNoteName, midiToNoteName, formatScaleName, formatChordName } from './resolver.js';
 import { getScaleColor, getPolygonVertices, drawScaleBadge, startBadgeDrawing, PITCH_CLASS_COLORS } from './visual.js';
 import { createPortalDock } from './portal.js';
 
@@ -34,6 +35,31 @@ const FIREBASE_CONFIG = {
 };
 
 const APP_NAME = 'strudel-scalenav';
+
+// How long joinEnsemble() waits for the room's first response before returning.
+const FIRST_SNAPSHOT_TIMEOUT_MS = 10000;
+
+// Upper bound on simultaneous voices in a block() chord.
+const MAX_BLOCK_VOICES = 16;
+
+// One live handle per room. The documented usage re-runs joinEnsemble() on
+// every evaluation, so a new join for the same room replaces the previous
+// handle (listener, timers, badge) instead of stacking another one.
+const activeHandles = new Map(); // roomId -> { teardown, presenceRef }
+let unloadRegistered = false;
+let stopActiveBadge = null;
+
+function registerUnloadOnce() {
+  if (unloadRegistered || typeof window === 'undefined') return;
+  unloadRegistered = true;
+  window.addEventListener('beforeunload', () => {
+    for (const handle of activeHandles.values()) {
+      try {
+        deleteDoc(handle.presenceRef).catch(() => {});
+      } catch {}
+    }
+  });
+}
 
 function getFbApp() {
   const existing = getApps().find((a) => a.name === APP_NAME);
@@ -57,6 +83,23 @@ function getStrudelSignal() {
   return null;
 }
 
+// Combine block-chord voices with Strudel's stack(). Looked up like signal().
+function strudelStack(patterns) {
+  const stack =
+    (typeof window !== 'undefined' && typeof window.stack === 'function' && window.stack) ||
+    (typeof globalThis.stack === 'function' && globalThis.stack) ||
+    (typeof globalThis.strudel?.stack === 'function' && globalThis.strudel.stack) ||
+    null;
+  if (!stack) {
+    throw new Error(
+      'strudel-scalenav: Strudel `stack()` not found, which block() needs. ' +
+        'Run this inside the Strudel REPL (strudel.cc) or expose it yourself: ' +
+        '`import { stack } from "@strudel/core"; globalThis.stack = stack`.',
+    );
+  }
+  return stack(...patterns);
+}
+
 function strudelSignal(fn, segmentRate = 1) {
   const sig = getStrudelSignal();
   if (!sig) {
@@ -68,6 +111,44 @@ function strudelSignal(fn, segmentRate = 1) {
   // Apply segment to make it work with note() - continuous signals don't trigger events
   return sig(fn).segment(segmentRate);
 }
+
+// Argument checks for the pattern helpers: fail at call time with a clear
+// message instead of producing silence or NaN notes later.
+function parseIndex(i, what) {
+  const n = typeof i === 'string' && /^\s*-?\d+\s*$/.test(i) ? Number(i) : i;
+  if (typeof n !== 'number' || !Number.isInteger(n)) {
+    throw new Error(
+      `strudel-scalenav: ${what} needs a whole-number index, e.g. ${what.replace('(i)', '(0)')}. ` +
+        'Strudel patterns and mini-notation are not supported as the index.',
+    );
+  }
+  return n;
+}
+
+// arp() takes notes-per-cycle (a positive whole number) or a string of note
+// indices such as "0 2 -1 1", where any non-numeric token (e.g. "~") is a rest.
+function parseArpPattern(pattern) {
+  if (typeof pattern === 'string') {
+    const tokens = pattern.trim().split(/\s+/).filter(Boolean);
+    if (!tokens.length) throw new Error('strudel-scalenav: arp("") needs at least one index, e.g. arp("0 2 1").');
+    const indices = tokens.map((tok) => {
+      if (!/^-?\d+(\.\d+)?$/.test(tok)) return null; // rest
+      const idx = Number(tok);
+      if (!Number.isInteger(idx)) {
+        throw new Error(`strudel-scalenav: arp("${pattern}") indices must be whole numbers (got ${tok}).`);
+      }
+      return idx;
+    });
+    return { indices };
+  }
+  if (typeof pattern === 'number' && Number.isInteger(pattern) && pattern > 0) return { n: pattern };
+  throw new Error(
+    'strudel-scalenav: arp() takes a positive whole number of notes per cycle, e.g. arp(4), or a string of ' +
+      'indices, e.g. arp("0 2 -1 1"). Strudel patterns are not supported as the argument.',
+  );
+}
+
+const isNote = (v) => v !== undefined;
 
 export async function signInWithGoogle() {
   const provider = new GoogleAuthProvider();
@@ -134,6 +215,20 @@ export async function setDisplayName(name) {
 
 async function ensureUserDoc(user, extra = {}) {
   const ref = doc(getFbDb(), 'users', user.uid);
+  // Only create the document. An account that already has one (for example
+  // from another Scale Navigator app) keeps its name, photo, source and
+  // creation time.
+  let existing;
+  try {
+    existing = await getDoc(ref);
+  } catch (err) {
+    console.warn('[strudel-scalenav] could not read the user document; leaving it unchanged:', err?.code || err);
+    return;
+  }
+  if (existing.exists()) {
+    if (extra.userName) await setDoc(ref, { userName: extra.userName }, { merge: true });
+    return;
+  }
   const initial = {
     email: user.email ?? null,
     userName: extra.userName ?? user.displayName ?? (user.email ? user.email.split('@')[0] : 'strudel user'),
@@ -198,6 +293,59 @@ export async function joinEnsemble(roomId, options = {}) {
     holdTimers.clear();
   };
   let appliedFirst = false;
+  // Held harmony changes are numbered so an older one can never land after a
+  // newer one has been applied.
+  let harmonySeq = 0;
+  let appliedSeq = 0;
+  let lastHarmonyKey = null;
+  const harmonyKeyOf = (data) =>
+    JSON.stringify([
+      data.scaleData ?? null,
+      data.chordData ?? null,
+      data.scaleInfo?.root,
+      data.scaleInfo?.pitchClasses,
+      data.chordInfo?.root,
+      data.chordInfo?.pitchClasses,
+      data.chordInfo?.voicing,
+    ]);
+  // A held change belongs to the connection it arrived on: drop it when the
+  // room goes away, and treat the next snapshot as the room's current state.
+  const dropHeldChanges = () => {
+    clearHoldTimers();
+    appliedFirst = false;
+    lastHarmonyKey = null;
+  };
+
+  // An inline scaleInfo/chordInfo is only trusted when it describes the id
+  // currently on the room document (a stale one may sit beside a newer id).
+  const infoMatches = (info, id) => !!info && (info.id === undefined || info.id === id);
+  let lastStrudelScale = null;
+  const warned = new Set();
+  const warnOnce = (key, message) => {
+    if (warned.has(key)) return;
+    warned.add(key);
+    console.warn(message);
+  };
+
+  // Replace any earlier handle for this room (see activeHandles).
+  activeHandles.get(roomId)?.teardown();
+
+  let stopBadge = null;
+  let left = false;
+  const handle = {
+    presenceRef,
+    teardown: () => {
+      unsubRoom();
+      clearHoldTimers(); // a held change must not land after leaving
+      if (stopBadge) {
+        stopBadge();
+        if (stopActiveBadge === stopBadge) stopActiveBadge = null;
+        stopBadge = null;
+      }
+      if (activeHandles.get(roomId) === handle) activeHandles.delete(roomId);
+      firstSnapshotResolve(); // a join replaced mid-flight must not keep waiting
+    },
+  };
 
   let warnedMissing = false;
   const unsubRoom = onSnapshot(
@@ -205,6 +353,7 @@ export async function joinEnsemble(roomId, options = {}) {
     (snap) => {
       if (!snap.exists()) {
         state.connected = false;
+        dropHeldChanges();
         if (!warnedMissing) {
           warnedMissing = true;
           console.warn(
@@ -220,14 +369,43 @@ export async function joinEnsemble(roomId, options = {}) {
         console.log(`[strudel-scalenav] Room "${roomId}" is now live. Connected.`);
       }
       const data = snap.data();
-      const applySnapshot = () => {
-        state.raw = data;
-        state.scale = resolveScale(data.scaleData);
-        state.chord = resolveChord(data.chordData);
-        state.bpm = typeof data.bpm === 'number' ? data.bpm : state.bpm;
-        state.hostName = data.hostName ?? null;
-        state.roomName = data.roomName ?? null;
-        state.connected = true;
+      const applyHarmony = () => {
+        // Bundled tables first; then the self-contained scaleInfo/chordInfo
+        // the host writes for custom harmony. When neither resolves, keep the
+        // last known harmony instead of dropping to a default.
+        const scale =
+          resolveScale(data.scaleData) ??
+          (infoMatches(data.scaleInfo, data.scaleData) ? resolveScaleInfo(data.scaleInfo) : null);
+        if (scale) {
+          state.scale = scale;
+          if (scale.strudelScale) {
+            lastStrudelScale = scale.strudelScale;
+          } else {
+            warnOnce(
+              `noname:${scale.id}`,
+              `[strudel-scalenav] Scale "${scale.prettyName}" has no Strudel scale name, so ens.strudelScale keeps its ` +
+                'previous value. Use the ens.scale.* helpers to play it.',
+            );
+          }
+        } else if (data.scaleData) {
+          warnOnce(
+            `scale:${data.scaleData}`,
+            `[strudel-scalenav] Unknown scale "${data.scaleData}". Keeping the previous scale.`,
+          );
+        }
+        const chord =
+          resolveChord(data.chordData) ??
+          (infoMatches(data.chordInfo, data.chordData) ? resolveChordInfo(data.chordInfo) : null);
+        if (chord) {
+          state.chord = chord;
+        } else if (data.chordData) {
+          warnOnce(
+            `chord:${data.chordData}`,
+            `[strudel-scalenav] Unknown chord "${data.chordData}". Keeping the previous chord.`,
+          );
+        }
+      };
+      const notify = () => {
         if (options.onUpdate) {
           try {
             options.onUpdate(state);
@@ -236,57 +414,120 @@ export async function joinEnsemble(roomId, options = {}) {
           }
         }
       };
+      // Only harmony is held for the downbeat; everything else applies now.
+      state.raw = data;
+      state.bpm = typeof data.bpm === 'number' ? data.bpm : state.bpm;
+      state.hostName = data.hostName ?? null;
+      state.roomName = data.roomName ?? null;
+      state.connected = true;
+
+      const harmonyKey = harmonyKeyOf(data);
+      const harmonyChanged = harmonyKey !== lastHarmonyKey;
+      lastHarmonyKey = harmonyKey;
       // The FIRST snapshot is the room's current state (a player joining
       // mid-piece), not an early broadcast — apply it instantly. Later
       // snapshots ARE early broadcasts: hold them for the downbeat.
-      const holdMs = appliedFirst ? readAnticipationMs(data) : 0;
+      const holdMs = appliedFirst && harmonyChanged ? readAnticipationMs(data) : 0;
       appliedFirst = true;
-      if (holdMs > 0) {
-        const t = setTimeout(() => {
-          holdTimers.delete(t);
-          applySnapshot();
-        }, holdMs);
-        holdTimers.add(t);
-      } else {
-        applySnapshot();
+      if (harmonyChanged) {
+        const seq = ++harmonySeq;
+        if (holdMs > 0) {
+          const t = setTimeout(() => {
+            holdTimers.delete(t);
+            if (seq < appliedSeq) return; // a newer change already landed
+            appliedSeq = seq;
+            applyHarmony();
+            notify();
+          }, holdMs);
+          holdTimers.add(t);
+        } else {
+          appliedSeq = seq;
+          applyHarmony();
+        }
       }
+      notify();
       firstSnapshotResolve(); // resolve on first data (never wait out a hold)
     },
     (err) => {
       state.connected = false;
+      dropHeldChanges();
       console.warn(
         `[strudel-scalenav] Lost connection to room "${roomId}" (${err?.code || err}). ` +
-          'Your pattern keeps playing with the last known harmony. It will reconnect automatically.',
+          'Your pattern keeps playing with the last known harmony. This connection is closed: ' +
+          'run joinEnsemble() again to reconnect.',
       );
       firstSnapshotResolve(); // resolve on error too
     },
   );
 
-  // Wait for first snapshot before returning
-  await firstSnapshot;
+  activeHandles.set(roomId, handle);
+  registerUnloadOnce();
 
-  try {
-    await setDoc(
-      presenceRef,
-      {
-        userName: user.displayName || user.email?.split('@')[0] || 'strudel guest',
-        email: user.email ?? null,
-        clientType: 'strudel',
-        joinedAt: serverTimestamp(),
-      },
-      { merge: true },
+  // Wait for first snapshot before returning, but not forever: with no network
+  // neither listener callback fires, and the rest of the user's code would
+  // never run.
+  const timeoutMs =
+    typeof options.timeoutMs === 'number' && options.timeoutMs > 0 ? options.timeoutMs : FIRST_SNAPSHOT_TIMEOUT_MS;
+  let timeoutId;
+  const timedOut = await Promise.race([
+    firstSnapshot.then(() => false),
+    new Promise((resolve) => {
+      timeoutId = setTimeout(() => resolve(true), timeoutMs);
+    }),
+  ]);
+  clearTimeout(timeoutId);
+  if (timedOut) {
+    console.warn(
+      `[strudel-scalenav] No response from room "${roomId}" after ${Math.round(timeoutMs / 1000)}s. ` +
+        'Check your internet connection. Still listening: harmony will follow once the room responds.',
     );
-  } catch (err) {
-    // Presence is a name tag, not a requirement — never block the music on it.
-    console.warn('[strudel-scalenav] could not register presence (non-fatal):', err?.code || err);
+  }
+
+  const registerPresence = async () => {
+    try {
+      await setDoc(
+        presenceRef,
+        {
+          userName: user.displayName || (user.isAnonymous ? 'strudel guest' : 'strudel user'),
+          clientType: 'strudel',
+          joinedAt: serverTimestamp(),
+        },
+        { merge: true },
+      );
+    } catch (err) {
+      // Presence is a name tag, not a requirement — never block the music on it.
+      console.warn('[strudel-scalenav] could not register presence (non-fatal):', err?.code || err);
+    }
+  };
+  if (timedOut) {
+    registerPresence(); // the write also waits for the network; do not wait with it
+  } else {
+    await registerPresence();
   }
 
   // Wrap index to handle negatives: -1 = last, -2 = second to last, etc.
   const wrapIndex = (i, len) => ((i % len) + len) % len;
 
-  const scalePC = (i) => {
-    const pcs = state.scale?.pitchClasses ?? [];
-    return pcs.length ? pcs[wrapIndex(i, pcs.length)] : 0;
+  // Pitch classes are stored in ascending numeric order (C upward). Return them
+  // as MIDI notes ascending from the root in octave 4 instead, carrying notes
+  // that wrap below the root up an octave. When the root is not among the
+  // notes (rootless voicings), start from the first note above it.
+  const notesFromRoot = (pcs, root) => {
+    if (!pcs.length) return [];
+    let start = pcs.findIndex((pc) => pc >= root);
+    if (start === -1) start = 0;
+    const first = pcs[start];
+    return pcs.map((_, k) => {
+      const pc = pcs[(start + k) % pcs.length];
+      return pc + 60 + (pc < first ? 12 : 0);
+    });
+  };
+  const scaleNotesFromRoot = () => notesFromRoot(state.scale?.pitchClasses ?? [], state.scale?.root ?? 0);
+  const chordNotesFromRoot = () => notesFromRoot(state.chord?.pitchClasses ?? [], state.chord?.root ?? 0);
+
+  const scaleNote = (i) => {
+    const notes = scaleNotesFromRoot();
+    return notes.length ? notes[wrapIndex(i, notes.length)] : 60;
   };
   const chordNote = (i) => {
     const notes = state.chord?.voicing ?? [];
@@ -296,11 +537,21 @@ export async function joinEnsemble(roomId, options = {}) {
   // === INTERNAL HELPERS ===
   // Helper to compute stacked third pitch from chord root
   const getChordThirdPitch = (i) => {
-    const scalePCs = state.scale?.pitchClasses ?? [];
+    let scalePCs = state.scale?.pitchClasses ?? [];
     const chordRoot = state.chord?.root ?? 0;
     if (!scalePCs.length) return 60;
     let rootIndex = scalePCs.indexOf(chordRoot);
-    if (rootIndex === -1) rootIndex = 0;
+    if (rootIndex === -1) {
+      // Chord root outside the scale: start on the chord root itself and
+      // continue through the scale tones above it.
+      warnOnce(
+        `thirds:${state.scale?.id}|${state.chord?.id}`,
+        `[strudel-scalenav] Chord root ${state.chord?.rootName ?? chordRoot} is not in the current scale; ` +
+          'chord.thirds starts on the chord root and continues through the scale above it.',
+      );
+      scalePCs = [...scalePCs, chordRoot].sort((a, b) => a - b);
+      rootIndex = scalePCs.indexOf(chordRoot);
+    }
     const targetIndex = rootIndex + (i * 2);
     const octaveOffset = Math.floor(targetIndex / scalePCs.length);
     const wrappedIndex = ((targetIndex % scalePCs.length) + scalePCs.length) % scalePCs.length;
@@ -309,29 +560,29 @@ export async function joinEnsemble(roomId, options = {}) {
 
   // Helper to compute stacked third pitch from scale root (index 0)
   const getScaleThirdPitch = (i) => {
-    const scalePCs = state.scale?.pitchClasses ?? [];
-    if (!scalePCs.length) return 60;
+    const notes = scaleNotesFromRoot();
+    if (!notes.length) return 60;
     const targetIndex = i * 2;
-    const octaveOffset = Math.floor(targetIndex / scalePCs.length);
-    const wrappedIndex = ((targetIndex % scalePCs.length) + scalePCs.length) % scalePCs.length;
-    return scalePCs[wrappedIndex] + 60 + (octaveOffset * 12);
+    const octaveOffset = Math.floor(targetIndex / notes.length);
+    const wrappedIndex = ((targetIndex % notes.length) + notes.length) % notes.length;
+    return notes[wrappedIndex] + (octaveOffset * 12);
   };
 
   // Generic arp helper
   const makeArp = (getNotes, pattern = 4) => {
     const sig = getStrudelSignal();
     if (!sig) throw new Error('strudel-scalenav: signal() not found');
-    if (typeof pattern === 'string') {
-      const indices = pattern.split(/\s+/).map(Number);
+    const { indices, n } = parseArpPattern(pattern);
+    if (indices) {
       return sig((t) => {
         const notes = getNotes();
         if (!notes.length) return 60;
         const idx = indices[Math.floor(t * indices.length) % indices.length];
-        return notes[idx % notes.length];
-      }).segment(indices.length);
+        return idx === null ? undefined : notes[wrapIndex(idx, notes.length)];
+      })
+        .segment(indices.length)
+        .filterValues(isNote);
     } else {
-      // number or fallback to 4
-      const n = typeof pattern === 'number' ? pattern : 4;
       return sig((t) => {
         const notes = getNotes();
         if (!notes.length) return 60;
@@ -344,44 +595,57 @@ export async function joinEnsemble(roomId, options = {}) {
   const makeBlock = (getNotes) => {
     const sig = getStrudelSignal();
     if (!sig) throw new Error('strudel-scalenav: signal() not found');
-    const notes = getNotes();
-    const patterns = notes.map((n) => sig(() => n).segment(1));
-    if (typeof globalThis.stack === 'function') {
-      return globalThis.stack(...patterns);
+    // Each voice reads the live notes on every query, so the block follows
+    // harmony changes. The voice count can change with the chord, so build a
+    // fixed number of voices and let the unused ones rest.
+    const patterns = [];
+    for (let k = 0; k < MAX_BLOCK_VOICES; k++) {
+      patterns.push(
+        sig(() => getNotes()[k])
+          .segment(1)
+          .filterValues((v) => v !== undefined),
+      );
     }
-    return patterns[0];
+    return strudelStack(patterns);
   };
 
   // === HIERARCHICAL NAMESPACE OBJECTS ===
 
   // ens.scale.*
   const scaleNamespace = {
-    // ens.scale.pitch(i) - i-th scale note in octave 4
-    pitch: (i) => strudelSignal(() => scalePC(i) + 60),
+    // ens.scale.pitch(i) - i-th scale note counting up from the root (root in octave 4)
+    pitch: (i) => {
+      const idx = parseIndex(i, 'scale.pitch(i)');
+      return strudelSignal(() => scaleNote(idx));
+    },
 
     // ens.scale.arp(n) - arpeggiate scale notes
-    arp: (pattern = 4) => makeArp(() => (state.scale?.pitchClasses ?? []).map(pc => pc + 60), pattern),
+    arp: (pattern = 4) => makeArp(scaleNotesFromRoot, pattern),
 
     // ens.scale.block() - all scale notes as block chord
-    block: () => makeBlock(() => (state.scale?.pitchClasses ?? []).map(pc => pc + 60)),
+    block: () => makeBlock(scaleNotesFromRoot),
 
     // ens.scale.thirds.*
     thirds: {
       // ens.scale.thirds.pitch(i) - stacked thirds from scale root
-      pitch: (i) => strudelSignal(() => getScaleThirdPitch(i)),
+      pitch: (i) => {
+        const idx = parseIndex(i, 'scale.thirds.pitch(i)');
+        return strudelSignal(() => getScaleThirdPitch(idx));
+      },
 
       // ens.scale.thirds.arp(n) - arpeggiate thirds from scale root
       arp: (pattern = 4) => {
         const sig = getStrudelSignal();
         if (!sig) throw new Error('strudel-scalenav: signal() not found');
-        if (typeof pattern === 'string') {
-          const indices = pattern.split(/\s+/).map(Number);
+        const { indices, n } = parseArpPattern(pattern);
+        if (indices) {
           return sig((t) => {
             const idx = indices[Math.floor(t * indices.length) % indices.length];
-            return getScaleThirdPitch(idx);
-          }).segment(indices.length);
+            return idx === null ? undefined : getScaleThirdPitch(idx);
+          })
+            .segment(indices.length)
+            .filterValues(isNote);
         } else {
-          const n = typeof pattern === 'number' ? pattern : 4;
           return sig((t) => getScaleThirdPitch(Math.floor(t * n) % n)).segment(n);
         }
       },
@@ -395,10 +659,7 @@ export async function joinEnsemble(roomId, options = {}) {
           const idx = i;
           patterns.push(sig(() => getScaleThirdPitch(idx)).segment(1));
         }
-        if (typeof globalThis.stack === 'function') {
-          return globalThis.stack(...patterns);
-        }
-        return patterns[0];
+        return strudelStack(patterns);
       },
     },
   };
@@ -406,7 +667,10 @@ export async function joinEnsemble(roomId, options = {}) {
   // ens.chord.voicing.*
   const voicingNamespace = {
     // ens.chord.voicing.pitch(i) - i-th voicing note (original octaves)
-    pitch: (i) => strudelSignal(() => chordNote(i)),
+    pitch: (i) => {
+      const idx = parseIndex(i, 'chord.voicing.pitch(i)');
+      return strudelSignal(() => chordNote(idx));
+    },
 
     // ens.chord.voicing.arp(n) - arpeggiate voicing
     arp: (pattern = 4) => makeArp(() => state.chord?.voicing ?? [], pattern),
@@ -417,37 +681,43 @@ export async function joinEnsemble(roomId, options = {}) {
 
   // ens.chord.closed.*
   const closedNamespace = {
-    // ens.chord.closed.pitch(i) - i-th chord note in close position (octave 4)
-    pitch: (i) => strudelSignal(() => {
-      const pcs = state.chord?.pitchClasses ?? [];
-      const pc = pcs.length ? pcs[wrapIndex(i, pcs.length)] : 0;
-      return pc + 60;
-    }),
+    // ens.chord.closed.pitch(i) - i-th chord note in close position, up from the root (octave 4)
+    pitch: (i) => {
+      const idx = parseIndex(i, 'chord.closed.pitch(i)');
+      return strudelSignal(() => {
+        const notes = chordNotesFromRoot();
+        return notes.length ? notes[wrapIndex(idx, notes.length)] : 60;
+      });
+    },
 
     // ens.chord.closed.arp(n) - arpeggiate closed position
-    arp: (pattern = 4) => makeArp(() => (state.chord?.pitchClasses ?? []).map(pc => pc + 60), pattern),
+    arp: (pattern = 4) => makeArp(chordNotesFromRoot, pattern),
 
     // ens.chord.closed.block() - all closed position notes as block chord
-    block: () => makeBlock(() => (state.chord?.pitchClasses ?? [0]).map(pc => pc + 60)),
+    block: () => makeBlock(() => (state.chord ? chordNotesFromRoot() : [60])),
   };
 
   // ens.chord.thirds.*
   const chordThirdsNamespace = {
     // ens.chord.thirds.pitch(i) - stacked thirds from chord root
-    pitch: (i) => strudelSignal(() => getChordThirdPitch(i)),
+    pitch: (i) => {
+      const idx = parseIndex(i, 'chord.thirds.pitch(i)');
+      return strudelSignal(() => getChordThirdPitch(idx));
+    },
 
     // ens.chord.thirds.arp(n) - arpeggiate thirds from chord root
     arp: (pattern = 4) => {
       const sig = getStrudelSignal();
       if (!sig) throw new Error('strudel-scalenav: signal() not found');
-      if (typeof pattern === 'string') {
-        const indices = pattern.split(/\s+/).map(Number);
+      const { indices, n } = parseArpPattern(pattern);
+      if (indices) {
         return sig((t) => {
           const idx = indices[Math.floor(t * indices.length) % indices.length];
-          return getChordThirdPitch(idx);
-        }).segment(indices.length);
+          return idx === null ? undefined : getChordThirdPitch(idx);
+        })
+          .segment(indices.length)
+          .filterValues(isNote);
       } else {
-        const n = typeof pattern === 'number' ? pattern : 4;
         return sig((t) => getChordThirdPitch(Math.floor(t * n) % n)).segment(n);
       }
     },
@@ -461,10 +731,7 @@ export async function joinEnsemble(roomId, options = {}) {
         const idx = i;
         patterns.push(sig(() => getChordThirdPitch(idx)).segment(1));
       }
-      if (typeof globalThis.stack === 'function') {
-        return globalThis.stack(...patterns);
-      }
-      return patterns[0];
+      return strudelStack(patterns);
     },
   };
 
@@ -492,9 +759,9 @@ export async function joinEnsemble(roomId, options = {}) {
       return state.scale?.pitchClasses ?? [];
     },
     get scaleNotes() {
-      return (state.scale?.pitchClasses ?? []).map(pc => pc + 60);
+      return scaleNotesFromRoot();
     },
-    strudelScale: strudelSignal(() => state.scale?.strudelScale ?? 'C:major'),
+    strudelScale: strudelSignal(() => state.scale?.strudelScale ?? lastStrudelScale ?? 'C:major'),
     scaleName: strudelSignal(() => state.scale?.id ?? 'unknown'),
     scaleClass: strudelSignal(() => state.scale?.scaleClass ?? 'unknown'),
     scaleRootName: strudelSignal(() => state.scale?.rootName ?? 'C'),
@@ -512,7 +779,7 @@ export async function joinEnsemble(roomId, options = {}) {
       return state.chord?.pitchClasses ?? [];
     },
     get chordClosed() {
-      return (state.chord?.pitchClasses ?? []).map(pc => pc + 60);
+      return chordNotesFromRoot();
     },
     chordRootName: strudelSignal(() => state.chord?.rootName ?? 'C'),
     chordType: strudelSignal(() => state.chord?.chordType ?? 'unknown'),
@@ -568,15 +835,28 @@ export async function joinEnsemble(roomId, options = {}) {
       if (!name || typeof name !== 'string') {
         throw new Error('strudel-scalenav: setName requires a non-empty string, e.g. ens.setName("Tyler")');
       }
+      if (left) {
+        throw new Error('strudel-scalenav: setName called after leave(). Join the room again first.');
+      }
       try {
         await updateProfile(user, { displayName: name });
-      } catch {}
+      } catch (err) {
+        console.warn(
+          '[strudel-scalenav] setName: could not save the name to your profile, so it will not be ' +
+            'remembered on the next join:',
+          err?.code || err,
+        );
+      }
       await setDoc(presenceRef, { userName: name }, { merge: true });
     },
 
     leave: async () => {
-      unsubRoom();
-      clearHoldTimers(); // a held change must not land after leaving
+      // A handle that was already replaced by a newer join for this room must
+      // not remove the presence entry the newer one is using.
+      const current = activeHandles.get(roomId) === handle;
+      left = true;
+      handle.teardown();
+      if (!current) return;
       try {
         await deleteDoc(presenceRef);
       } catch (err) {
@@ -586,8 +866,13 @@ export async function joinEnsemble(roomId, options = {}) {
 
     // Show the scale badge in Strudel REPL header area
     // Just call ens.showBadge() - it handles everything
+    // Only one badge runs at a time: calling it again replaces the previous one.
+    // Returns a function that stops the badge (null if drawing is unavailable).
     showBadge(options = {}) {
-      return startBadgeDrawing({ state, roomId }, options);
+      if (stopActiveBadge) stopActiveBadge();
+      stopBadge = startBadgeDrawing({ state, roomId }, options);
+      stopActiveBadge = stopBadge;
+      return stopBadge;
     },
 
     // Embed the deployed Enter portal as a collapsible strip over the REPL
@@ -605,20 +890,8 @@ export async function joinEnsemble(roomId, options = {}) {
     },
   };
 
-  if (typeof window !== 'undefined') {
-    window.addEventListener(
-      'beforeunload',
-      () => {
-        try {
-          deleteDoc(presenceRef);
-        } catch {}
-      },
-      { once: true },
-    );
-  }
-
   return api;
 }
 
-export { pcToNoteName, midiToNoteName, resolveScale, resolveChord, formatScaleName, formatChordName };
+export { pcToNoteName, midiToNoteName, resolveScale, resolveChord, resolveScaleInfo, resolveChordInfo, formatScaleName, formatChordName };
 export { getScaleColor, getPolygonVertices, drawScaleBadge, PITCH_CLASS_COLORS };

@@ -38,7 +38,7 @@ function titleCaseWords(s) {
 export function formatScaleName(scaleId) {
   if (!scaleId || typeof scaleId !== 'string') return '';
 
-  const scaleData = ScaleData[scaleId];
+  const scaleData = Object.hasOwn(ScaleData, scaleId) ? ScaleData[scaleId] : undefined;
   const parts = scaleId.split('_');
   const maybeRoot = parts[0];
   const hasRootToken = PITCH_TOKENS.has(maybeRoot);
@@ -90,18 +90,18 @@ const SCALE_CLASS_TO_STRUDEL = {
   harmonic_major: 'harmonic major',
   acoustic: 'lydian dominant',
   whole_tone: 'whole tone',
-  octatonic: 'diminished',
+  octatonic: 'half-whole diminished',
   hexatonic: 'augmented',
 };
 
 export function pcToNoteName(pc, { flats = false } = {}) {
-  if (typeof pc !== 'number') return null;
+  if (!Number.isInteger(pc)) return null;
   const n = ((pc % 12) + 12) % 12;
   return (flats ? NOTE_NAMES_FLAT : NOTE_NAMES)[n];
 }
 
 export function midiToNoteName(midi) {
-  if (typeof midi !== 'number') return null;
+  if (!Number.isInteger(midi)) return null;
   const pc = ((midi % 12) + 12) % 12;
   const octave = Math.floor(midi / 12) - 1;
   return `${NOTE_NAMES[pc]}${octave}`;
@@ -109,7 +109,7 @@ export function midiToNoteName(midi) {
 
 export function resolveScale(scaleId) {
   if (!scaleId || typeof scaleId !== 'string') return null;
-  const raw = ScaleData[scaleId];
+  const raw = Object.hasOwn(ScaleData, scaleId) ? ScaleData[scaleId] : null;
   if (!raw) return null;
 
   const strudelClass = SCALE_CLASS_TO_STRUDEL[raw.scale_class] ?? null;
@@ -128,9 +128,63 @@ export function resolveScale(scaleId) {
   };
 }
 
+const isPitchClass = (v) => typeof v === 'number' && isFinite(v) && v >= 0 && v < 12;
+const isMidiNote = (v) => typeof v === 'number' && isFinite(v);
+
+// Build a scale from a self-contained `scaleInfo` object, as hosts write on
+// the room document for scales that are not in the bundled table. Returns
+// null when the object is missing or malformed.
+export function resolveScaleInfo(info) {
+  if (!info || typeof info !== 'object') return null;
+  const { root, pitchClasses } = info;
+  if (!isPitchClass(root)) return null;
+  if (!Array.isArray(pitchClasses) || !pitchClasses.length || !pitchClasses.every(isPitchClass)) return null;
+
+  const id = typeof info.id === 'string' && info.id ? info.id : 'custom';
+  return {
+    id,
+    root,
+    rootName: pcToNoteName(root) ?? null,
+    pitchClasses: [...new Set(pitchClasses)].sort((a, b) => a - b),
+    scaleClass: typeof info.scaleClass === 'string' && info.scaleClass ? info.scaleClass : 'custom',
+    strudelScale: null, // no Strudel scale name for a user-defined collection
+    prettyName: typeof info.name === 'string' && info.name ? info.name : id,
+    isCustom: true,
+  };
+}
+
+// Build a chord from a self-contained `chordInfo` object (see resolveScaleInfo).
+export function resolveChordInfo(info) {
+  if (!info || typeof info !== 'object') return null;
+  if (!isPitchClass(info.root)) return null;
+
+  const hasVoicing = Array.isArray(info.voicing) && info.voicing.length > 0 && info.voicing.every(isMidiNote);
+  const hasPitchClasses =
+    Array.isArray(info.pitchClasses) && info.pitchClasses.length > 0 && info.pitchClasses.every(isPitchClass);
+  if (!hasVoicing && !hasPitchClasses) return null;
+
+  const rawPitchClasses = hasPitchClasses ? info.pitchClasses : info.voicing.map((m) => ((m % 12) + 12) % 12);
+  const pitchClasses = [...new Set(rawPitchClasses)].sort((a, b) => a - b);
+  const voicing = hasVoicing ? [...info.voicing] : pitchClasses.map((pc) => pc + 60);
+  const id = typeof info.id === 'string' && info.id ? info.id : 'custom';
+  const name = typeof info.name === 'string' && info.name ? info.name : 'custom';
+
+  return {
+    id,
+    root: info.root,
+    rootName: pcToNoteName(info.root) ?? null,
+    chordType: name,
+    voicing,
+    noteNames: voicing.map((m) => (Number.isInteger(m) ? midiToNoteName(m) : String(m))),
+    pitchClasses,
+    prettyName: name,
+    isCustom: true,
+  };
+}
+
 export function resolveChord(chordId) {
   if (!chordId || typeof chordId !== 'string') return null;
-  const raw = ChordData[chordId];
+  const raw = Object.hasOwn(ChordData, chordId) ? ChordData[chordId] : null;
   if (!raw) return null;
 
   const voicing = raw.original_voicing ?? [];
