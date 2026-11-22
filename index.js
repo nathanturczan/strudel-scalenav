@@ -343,6 +343,7 @@ export async function joinEnsemble(roomId, options = {}) {
         stopBadge = null;
       }
       if (activeHandles.get(roomId) === handle) activeHandles.delete(roomId);
+      firstSnapshotResolve(); // a join replaced mid-flight must not keep waiting
     },
   };
 
